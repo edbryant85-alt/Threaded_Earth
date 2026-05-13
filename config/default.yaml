@@ -32,6 +32,14 @@ simulation:
     propagation_min_relationship_threshold: 0.62
     propagation_create_memories: true
     propagation_memory_salience_multiplier: 0.45
+  roles:
+    role_influence_enabled: true
+    role_influence_min_score: 0.45
+    role_influence_max_adjustment: 0.08
+    role_influence_relevant_actions_only: true
+  norms:
+    norm_influence_enabled: false
+    norm_influence_strength: 0.02
 
 archetypes:
   - cultivator

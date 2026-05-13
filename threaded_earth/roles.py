@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Any
 
 from sqlalchemy.orm import Session
 
+from threaded_earth.config import RoleConfig
 from threaded_earth.models import Agent, Decision, Event, Relationship, RoleSignal
 
 
@@ -18,6 +20,15 @@ ROLE_NAMES = {
     "isolated",
     "trusted_neighbor",
 }
+
+
+@dataclass(frozen=True)
+class RoleInfluence:
+    adjustments: dict[str, float]
+    seen: list[str]
+    applied: list[str]
+    total: float
+    capped: bool
 
 
 def initialize_role_biases(session: Session, run_id: str, agents: list[Agent], tick: int = 0) -> None:
@@ -136,7 +147,12 @@ def update_tick_role_signals(session: Session, run_id: str, agents: list[Agent],
             update_role_signal(session, run_id, agent.neutral_id, "isolated", 0.025, tick, "low interaction frequency")
 
 
-def role_adjustments(roles: list[RoleSignal]) -> dict[str, float]:
+def calculate_role_influence(roles: list[RoleSignal], config: RoleConfig | None = None) -> RoleInfluence:
+    config = config or RoleConfig()
+    seen = [role.role_signal_id for role in roles]
+    if not config.role_influence_enabled:
+        return RoleInfluence({}, seen, [], 0.0, False)
+
     adjustments = {
         "seek_food": 0.0,
         "cooperate": 0.0,
@@ -145,8 +161,12 @@ def role_adjustments(roles: list[RoleSignal]) -> dict[str, float]:
         "avoid_conflict": 0.0,
         "conflict_over_food": 0.0,
     }
+    applied: list[str] = []
     for role in roles:
+        if role.score < config.role_influence_min_score:
+            continue
         weight = min(0.06, role.score * 0.08)
+        before = dict(adjustments)
         if role.role_name == "provider":
             adjustments["seek_food"] += weight
             adjustments["cooperate"] += weight * 0.3
@@ -171,17 +191,35 @@ def role_adjustments(roles: list[RoleSignal]) -> dict[str, float]:
         elif role.role_name == "craft_worker":
             adjustments["seek_food"] += weight * 0.25
             adjustments["cooperate"] += weight * 0.25
-    return {action: round(value, 4) for action, value in adjustments.items() if abs(value) >= 0.001}
+        if any(abs(adjustments[action] - before[action]) >= 0.001 for action in adjustments):
+            applied.append(role.role_signal_id)
+
+    filtered = {action: value for action, value in adjustments.items() if abs(value) >= 0.001}
+    total = sum(abs(value) for value in filtered.values())
+    capped = False
+    if total > config.role_influence_max_adjustment > 0:
+        scale = config.role_influence_max_adjustment / total
+        filtered = {action: value * scale for action, value in filtered.items()}
+        total = config.role_influence_max_adjustment
+        capped = True
+    rounded = {action: round(value, 4) for action, value in filtered.items() if abs(value) >= 0.001}
+    return RoleInfluence(rounded, seen, applied, round(total, 4), capped)
 
 
-def summarize_role_influence(roles: list[RoleSignal], adjustments: dict[str, float]) -> str:
+def role_adjustments(roles: list[RoleSignal]) -> dict[str, float]:
+    return calculate_role_influence(roles).adjustments
+
+
+def summarize_role_influence(roles: list[RoleSignal], influence: RoleInfluence | dict[str, float]) -> str:
+    adjustments = influence.adjustments if isinstance(influence, RoleInfluence) else influence
     if not roles:
-        return "No role signals applied."
+        return "No role signals seen."
     role_text = ", ".join(f"{role.role_name}={role.score:.2f}" for role in roles[:4])
     if not adjustments:
-        return f"Role signals present but below scoring threshold: {role_text}."
+        return f"Role signals seen but not applied: {role_text}."
+    cap_text = " capped" if isinstance(influence, RoleInfluence) and influence.capped else ""
     adjustment_text = ", ".join(f"{action}={value:+.3f}" for action, value in sorted(adjustments.items()))
-    return f"Roles {role_text} adjusted actions: {adjustment_text}."
+    return f"Roles {role_text} adjusted actions{cap_text}: {adjustment_text}."
 
 
 def role_stats(session: Session, run_id: str) -> dict[str, Any]:

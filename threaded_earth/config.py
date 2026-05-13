@@ -53,6 +53,18 @@ class PropagationConfig(BaseModel):
     propagation_memory_salience_multiplier: float = 0.45
 
 
+class RoleConfig(BaseModel):
+    role_influence_enabled: bool = True
+    role_influence_min_score: float = 0.45
+    role_influence_max_adjustment: float = 0.08
+    role_influence_relevant_actions_only: bool = True
+
+
+class NormConfig(BaseModel):
+    norm_influence_enabled: bool = False
+    norm_influence_strength: float = 0.02
+
+
 class SimulationConfig(BaseModel):
     population_size: int = 50
     settlement: SettlementConfig
@@ -61,6 +73,8 @@ class SimulationConfig(BaseModel):
     decision: DecisionConfig = Field(default_factory=DecisionConfig)
     upkeep: UpkeepConfig = Field(default_factory=UpkeepConfig)
     propagation: PropagationConfig = Field(default_factory=PropagationConfig)
+    roles: RoleConfig = Field(default_factory=RoleConfig)
+    norms: NormConfig = Field(default_factory=NormConfig)
 
 
 class ThreadedEarthConfig(BaseModel):

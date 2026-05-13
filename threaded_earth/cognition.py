@@ -6,9 +6,10 @@ from typing import Any
 
 from threaded_earth.goals import goal_adjustments, summarize_goal_influence
 from threaded_earth.memory import RetrievedMemory, memory_adjustments, summarize_memory_influence
+from threaded_earth.config import RoleConfig
 from threaded_earth.models import Agent, Goal, Household, Relationship, RoleSignal
 from threaded_earth.resources import household_food, household_materials
-from threaded_earth.roles import role_adjustments, summarize_role_influence
+from threaded_earth.roles import calculate_role_influence, summarize_role_influence
 from threaded_earth.targeting import TargetSelection, evaluate_target_aware_actions
 
 
@@ -40,6 +41,10 @@ class DecisionTrace:
     final_score_breakdown: dict[str, Any]
     role_influence_summary: str
     role_score_adjustments: dict[str, float]
+    role_signals_seen: list[str]
+    role_signals_applied: list[str]
+    role_adjustment_total: float
+    role_adjustment_capped: bool
 
 
 def choose_action(
@@ -53,6 +58,7 @@ def choose_action(
     households_by_agent: dict[str, Household] | None = None,
     active_roles: list[RoleSignal] | None = None,
     role_signals_by_agent: dict[str, list[RoleSignal]] | None = None,
+    role_config: RoleConfig | None = None,
 ) -> DecisionTrace:
     retrieved_memories = retrieved_memories or []
     active_goals = active_goals or []
@@ -82,7 +88,8 @@ def choose_action(
 
     adjustments = memory_adjustments(retrieved_memories, avg_trust)
     goal_scores = goal_adjustments(active_goals)
-    role_scores = role_adjustments(active_roles)
+    role_influence = calculate_role_influence(active_roles, role_config)
+    role_scores = role_influence.adjustments
     target_evaluation = evaluate_target_aware_actions(
         [candidate["action"] for candidate in candidates],
         agent,
@@ -147,8 +154,11 @@ def choose_action(
         reasons.append(f"active_goal_ids={[goal.goal_id for goal in active_goals]}")
         reasons.append(f"goal_score_adjustments={goal_scores}")
     if active_roles:
-        reasons.append(f"active_role_signals={[role.role_signal_id for role in active_roles]}")
+        reasons.append(f"role_signals_seen={role_influence.seen}")
+        reasons.append(f"role_signals_applied={role_influence.applied}")
         reasons.append(f"role_score_adjustments={role_scores}")
+        reasons.append(f"role_adjustment_total={role_influence.total}")
+        reasons.append(f"role_adjustment_capped={role_influence.capped}")
     if target_selection.selected_target_agent_id:
         reasons.append(f"selected_target_agent_id={target_selection.selected_target_agent_id}")
         reasons.append(f"target_selection_scores={target_selection.target_selection_scores}")
@@ -195,8 +205,12 @@ def choose_action(
         best_target_by_action=target_evaluation.best_target_by_action,
         target_aware_score_reasons=target_evaluation.target_aware_score_reasons,
         final_score_breakdown=final_breakdown,
-        role_influence_summary=summarize_role_influence(active_roles, role_scores),
+        role_influence_summary=summarize_role_influence(active_roles, role_influence),
         role_score_adjustments=role_scores,
+        role_signals_seen=role_influence.seen,
+        role_signals_applied=role_influence.applied,
+        role_adjustment_total=role_influence.total,
+        role_adjustment_capped=role_influence.capped,
     )
 
 

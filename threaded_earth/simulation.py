@@ -13,6 +13,7 @@ from threaded_earth.goals import update_agent_goals
 from threaded_earth.memory import retrieve_relevant_memories
 from threaded_earth.metrics import write_metrics
 from threaded_earth.models import Agent, Decision, Household, Memory, Relationship, Run
+from threaded_earth.norms import update_norm_candidates_for_event
 from threaded_earth.paths import ensure_artifact_dirs
 from threaded_earth.propagation import propagate_social_event
 from threaded_earth.resources import add_household_resource, consume_household_food, household_food, transfer_household_resource
@@ -98,6 +99,7 @@ def _simulate_tick(session: Session, run_id: str, tick: int, rng: random.Random,
             households_by_agent,
             active_roles,
             roles_by_agent,
+            config.simulation.roles,
         )
         _record_decision(session, run_id, agent, tick, trace)
         _apply_action(session, run_id, tick, rng, agent, household, relationships, trace, agents_by_id, households_by_agent, config)
@@ -124,7 +126,11 @@ def _record_decision(session: Session, run_id: str, agent: Agent, tick: int, tra
                 f"goal_influence_summary={trace.goal_influence_summary}",
                 f"goal_score_adjustments={trace.goal_score_adjustments}",
                 f"role_influence_summary={trace.role_influence_summary}",
+                f"role_signals_seen={trace.role_signals_seen}",
+                f"role_signals_applied={trace.role_signals_applied}",
                 f"role_score_adjustments={trace.role_score_adjustments}",
+                f"role_adjustment_total={trace.role_adjustment_total}",
+                f"role_adjustment_capped={trace.role_adjustment_capped}",
                 f"selected_target_agent_id={trace.selected_target_agent_id}",
                 f"target_selection_reasons={trace.target_selection_reasons}",
                 f"target_aware_action_scores={trace.target_aware_action_scores}",
@@ -148,6 +154,10 @@ def _record_decision(session: Session, run_id: str, agent: Agent, tick: int, tra
             final_score_breakdown=trace.final_score_breakdown,
             role_influence_summary=trace.role_influence_summary,
             role_score_adjustments=trace.role_score_adjustments,
+            role_signals_seen=trace.role_signals_seen,
+            role_signals_applied=trace.role_signals_applied,
+            role_adjustment_total=trace.role_adjustment_total,
+            role_adjustment_capped=trace.role_adjustment_capped,
             confidence=trace.confidence,
             uncertainty_notes=trace.uncertainty_notes,
         )
@@ -252,6 +262,7 @@ def _apply_action(
         )
         _remember(session, run_id, tick, agent.neutral_id, event.event_id, 0.45, event.summary)
         record_action_role_evidence(session, run_id, agent, tick, action, event)
+        update_norm_candidates_for_event(session, run_id, event, agent, None, target_rel, tick)
     elif action == "cooperate":
         target_household = _target_household(households_by_agent, trace.selected_target_agent_id)
         transfer = None
@@ -285,6 +296,7 @@ def _apply_action(
         _remember(session, run_id, tick, agent.neutral_id, event.event_id, 0.58, event.summary)
         _remember_target(session, run_id, tick, trace.selected_target_agent_id, event.event_id, 0.56, event.summary)
         record_action_role_evidence(session, run_id, agent, tick, action, event)
+        update_norm_candidates_for_event(session, run_id, event, agent, agents_by_id.get(trace.selected_target_agent_id), target_rel, tick)
         propagate_social_event(session, run_id, tick, event, agents_by_id, households_by_agent, config.simulation.propagation)
     elif action == "share_food":
         target_household = _target_household(households_by_agent, trace.selected_target_agent_id)
@@ -320,6 +332,7 @@ def _apply_action(
         _remember(session, run_id, tick, agent.neutral_id, event.event_id, 0.64, event.summary)
         _remember_target(session, run_id, tick, trace.selected_target_agent_id, event.event_id, 0.62, event.summary)
         record_action_role_evidence(session, run_id, agent, tick, action, event)
+        update_norm_candidates_for_event(session, run_id, event, agent, agents_by_id.get(trace.selected_target_agent_id), target_rel, tick)
         propagate_social_event(session, run_id, tick, event, agents_by_id, households_by_agent, config.simulation.propagation)
     elif action == "repair_relationship":
         if target_rel is not None:
@@ -340,6 +353,7 @@ def _apply_action(
         _remember(session, run_id, tick, agent.neutral_id, event.event_id, 0.66, event.summary)
         _remember_target(session, run_id, tick, trace.selected_target_agent_id, event.event_id, 0.62, event.summary)
         record_action_role_evidence(session, run_id, agent, tick, action, event)
+        update_norm_candidates_for_event(session, run_id, event, agent, agents_by_id.get(trace.selected_target_agent_id), target_rel, tick)
         propagate_social_event(session, run_id, tick, event, agents_by_id, households_by_agent, config.simulation.propagation)
     elif action == "avoid_conflict":
         agent.needs["belonging"] = max(0, agent.needs["belonging"] - 2)
@@ -356,6 +370,7 @@ def _apply_action(
         _remember(session, run_id, tick, agent.neutral_id, event.event_id, 0.57, event.summary)
         _remember_target(session, run_id, tick, trace.selected_target_agent_id, event.event_id, 0.55, event.summary)
         record_action_role_evidence(session, run_id, agent, tick, action, event)
+        update_norm_candidates_for_event(session, run_id, event, agent, agents_by_id.get(trace.selected_target_agent_id), target_rel, tick)
     elif action == "conflict_over_food":
         target_household = _target_household(households_by_agent, trace.selected_target_agent_id)
         transfer = None
@@ -391,6 +406,7 @@ def _apply_action(
         _remember(session, run_id, tick, agent.neutral_id, event.event_id, 0.78, event.summary)
         _remember_target(session, run_id, tick, trace.selected_target_agent_id, event.event_id, 0.74, event.summary)
         record_action_role_evidence(session, run_id, agent, tick, action, event)
+        update_norm_candidates_for_event(session, run_id, event, agent, agents_by_id.get(trace.selected_target_agent_id), target_rel, tick)
         propagate_social_event(session, run_id, tick, event, agents_by_id, households_by_agent, config.simulation.propagation)
     else:
         agent.needs["rest"] = min(100, agent.needs["rest"] + 14)

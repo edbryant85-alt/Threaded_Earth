@@ -6,7 +6,8 @@ from sqlalchemy.orm import Session
 
 from threaded_earth.goals import goal_stats
 from threaded_earth.metrics import compute_metrics, write_metrics
-from threaded_earth.models import Decision, Event, Goal, Memory, Resource, RoleSignal, Run
+from threaded_earth.models import Decision, Event, Goal, Memory, NormCandidate, Resource, RoleSignal, Run
+from threaded_earth.norms import norm_stats
 from threaded_earth.paths import report_path
 from threaded_earth.propagation import propagation_pressure_rows, propagation_stats
 from threaded_earth.resources import household_resource_summary
@@ -44,6 +45,7 @@ def generate_report(session: Session, run_id: str) -> Path:
     propagation_lines = _social_propagation_lines(session, run_id)
     propagation_pressure_lines = _propagation_pressure_lines(session, run_id)
     role_lines = _role_stabilization_lines(session, run_id)
+    norm_lines = _norm_candidate_lines(session, run_id)
 
     path = report_path(run_id)
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -84,6 +86,9 @@ def generate_report(session: Session, run_id: str) -> Path:
                 "",
                 "## Role Stabilization",
                 *role_lines,
+                "",
+                "## Norm Candidates",
+                *norm_lines,
                 "",
                 "## Major Events",
                 *(event_lines or ["- No major events recorded."]),
@@ -357,7 +362,7 @@ def _role_stabilization_lines(session: Session, run_id: str) -> list[str]:
         .order_by(Decision.tick, Decision.agent_id)
         .all()
     )
-    influenced = [decision for decision in influenced if decision.role_score_adjustments]
+    influenced = [decision for decision in influenced if decision.role_signals_applied]
     examples = [
         f"- decision tick {decision.tick} {decision.agent_id}: {decision.selected_action.get('action')}; "
         f"{decision.role_influence_summary}"
@@ -379,4 +384,26 @@ def _role_stabilization_lines(session: Session, run_id: str) -> list[str]:
         *(top_roles or ["- top role signals: none recorded."]),
         *(shifts or ["- notable role shifts: none recorded."]),
         *(examples or ["- example decisions influenced by roles: none recorded."]),
+    ]
+
+
+def _norm_candidate_lines(session: Session, run_id: str) -> list[str]:
+    stats = norm_stats(session, run_id)
+    norms = (
+        session.query(NormCandidate)
+        .filter(NormCandidate.run_id == run_id)
+        .order_by(NormCandidate.support_score.desc(), NormCandidate.evidence_count.desc(), NormCandidate.norm_name)
+        .all()
+    )
+    examples = [
+        f"- {norm.norm_name}: status={norm.status}; evidence={norm.evidence_count}; "
+        f"support={norm.support_score:.2f}; opposition={norm.opposition_score:.2f}; "
+        f"last_tick={norm.last_observed_tick}; example={norm.evidence_summary}"
+        for norm in norms[:8]
+    ]
+    return [
+        "- These are descriptive candidates inferred from repeated logged patterns, not laws, institutions, or enforced rules.",
+        f"- total candidates: {stats['norm_candidates_total']}",
+        f"- emerging/stable/declining: {stats['emerging_norms']}/{stats['stable_norms']}/{stats['declining_norms']}",
+        *(examples or ["- detected norms: none yet."]),
     ]

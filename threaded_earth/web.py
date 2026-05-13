@@ -8,7 +8,8 @@ from fastapi.responses import HTMLResponse
 from threaded_earth.db import session_factory
 from threaded_earth.goals import goal_stats
 from threaded_earth.memory import memory_stats
-from threaded_earth.models import Agent, Decision, Event, Goal, Memory, RoleSignal, Run
+from threaded_earth.models import Agent, Decision, Event, Goal, Memory, NormCandidate, RoleSignal, Run
+from threaded_earth.norms import norm_stats
 from threaded_earth.paths import ARTIFACTS_DIR, db_path, metrics_path
 from threaded_earth.propagation import propagation_pressure_rows, propagation_stats, recent_propagation_events
 from threaded_earth.resources import household_resource_summary, upkeep_stats_for_tick
@@ -48,6 +49,7 @@ def run_detail(run_id: str) -> str:
         propagation_summary = propagation_stats(session, run_id)
         pressure_rows = propagation_pressure_rows(session, run_id)[-10:]
         role_summary = role_stats(session, run_id)
+        norm_summary = norm_stats(session, run_id)
         resource_summary = household_resource_summary(session, run_id)
         recent_goals = (
             session.query(Goal)
@@ -97,9 +99,16 @@ def run_detail(run_id: str) -> str:
             .limit(12)
             .all()
         )
+        recent_norms = (
+            session.query(NormCandidate)
+            .filter(NormCandidate.run_id == run_id)
+            .order_by(NormCandidate.support_score.desc(), NormCandidate.last_observed_tick.desc(), NormCandidate.norm_name)
+            .limit(12)
+            .all()
+        )
         influenced_count = sum(1 for decision in influenced_decisions if decision.retrieved_memory_ids)
         goal_influenced_count = sum(1 for decision in influenced_decisions if decision.active_goal_ids)
-        role_influenced_count = sum(1 for decision in influenced_decisions if decision.role_score_adjustments)
+        role_influenced_count = sum(1 for decision in influenced_decisions if decision.role_signals_applied)
     metrics = {}
     if metrics_path(run_id).exists():
         metrics = json.loads(metrics_path(run_id).read_text(encoding="utf-8"))
@@ -174,6 +183,10 @@ def run_detail(run_id: str) -> str:
         f"<tr><td>{role.agent_id}</td><td>{role.role_name}</td><td>{role.score:.2f}</td><td>{role.evidence_count}</td><td>{role.updated_tick}</td><td>{role.evidence_summary}</td></tr>"
         for role in recent_roles
     )
+    norm_rows = "".join(
+        f"<tr><td>{norm.norm_name}</td><td>{norm.status}</td><td>{norm.evidence_count}</td><td>{norm.support_score:.2f}</td><td>{norm.opposition_score:.2f}</td><td>{norm.last_observed_tick}</td><td>{norm.evidence_summary}</td></tr>"
+        for norm in recent_norms
+    )
     latest_tick = inventory.latest_tick if inventory.latest_tick is not None else "none"
     expected_ticks = inventory.expected_ticks if inventory.expected_ticks is not None else "unknown"
     return _page(
@@ -217,6 +230,9 @@ def run_detail(run_id: str) -> str:
         <p>Role-influenced decisions: <strong>{role_influenced_count}</strong></p>
         <table><tr><th>Role</th><th>Agents Above Threshold</th></tr>{role_count_rows or '<tr><td colspan="2">No role signals above threshold.</td></tr>'}</table>
         <table><tr><th>Agent</th><th>Role</th><th>Score</th><th>Evidence</th><th>Updated Tick</th><th>Evidence Summary</th></tr>{role_rows or '<tr><td colspan="6">No role signals recorded.</td></tr>'}</table>
+        <h2>Norm Candidates</h2>
+        <p>Total: <strong>{norm_summary['norm_candidates_total']}</strong> | Emerging: <strong>{norm_summary['emerging_norms']}</strong> | Stable: <strong>{norm_summary['stable_norms']}</strong> | Declining: <strong>{norm_summary['declining_norms']}</strong></p>
+        <table><tr><th>Norm</th><th>Status</th><th>Evidence</th><th>Support</th><th>Opposition</th><th>Last Tick</th><th>Evidence Summary</th></tr>{norm_rows or '<tr><td colspan="7">No norm candidates recorded.</td></tr>'}</table>
         <h2>Recent Events</h2><table><tr><th>Tick</th><th>Type</th><th>Summary</th></tr>{event_rows}</table>
         <h2>Recent Decisions</h2><table><tr><th>Tick</th><th>Agent</th><th>Selected</th><th>Confidence</th></tr>{decision_rows}</table>
         """,

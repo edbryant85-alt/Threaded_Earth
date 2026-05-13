@@ -106,6 +106,21 @@ class RoleSignal(Base):
     evidence_summary: Mapped[str] = mapped_column(Text, default="")
 
 
+class NormCandidate(Base):
+    __tablename__ = "norm_candidates"
+
+    norm_candidate_id: Mapped[str] = mapped_column(String, primary_key=True)
+    run_id: Mapped[str] = mapped_column(ForeignKey("runs.run_id"), index=True)
+    norm_name: Mapped[str] = mapped_column(String, index=True)
+    evidence_count: Mapped[int] = mapped_column(Integer, default=0)
+    support_score: Mapped[float] = mapped_column(Float, default=0.0)
+    opposition_score: Mapped[float] = mapped_column(Float, default=0.0)
+    first_observed_tick: Mapped[int] = mapped_column(Integer, nullable=False)
+    last_observed_tick: Mapped[int] = mapped_column(Integer, nullable=False)
+    status: Mapped[str] = mapped_column(String, default="emerging")
+    evidence_summary: Mapped[str] = mapped_column(Text, default="")
+
+
 class Resource(Base):
     __tablename__ = "resources"
 
@@ -167,5 +182,9 @@ class Decision(Base):
     final_score_breakdown: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
     role_influence_summary: Mapped[str] = mapped_column(Text, default="No role signals applied.")
     role_score_adjustments: Mapped[dict[str, float]] = mapped_column(JSON, default=dict)
+    role_signals_seen: Mapped[list[str]] = mapped_column(JSON, default=list)
+    role_signals_applied: Mapped[list[str]] = mapped_column(JSON, default=list)
+    role_adjustment_total: Mapped[float] = mapped_column(Float, default=0.0)
+    role_adjustment_capped: Mapped[bool] = mapped_column(default=False)
     confidence: Mapped[float] = mapped_column(Float, nullable=False)
     uncertainty_notes: Mapped[str] = mapped_column(Text, nullable=False)
