@@ -16,6 +16,11 @@ simulation:
     conflict_threshold: 0.72
     cooperation_threshold: 0.58
     memory_salience_threshold: 0.62
+  upkeep:
+    daily_food_need_per_agent: 1.0
+    food_shortage_memory_threshold: 1.0
+    material_decay_enabled: false
+    material_decay_per_household: 0.0
 
 archetypes:
   - cultivator

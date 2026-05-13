@@ -83,7 +83,7 @@ Implemented:
 - one symbolic river valley settlement
 - approximately 50 agents
 - households and kinship-style relationships
-- simple needs, cooperation, conflict, resource exchange, food seeking, and rest
+- simple needs, cooperation, conflict, resource exchange, food seeking, household upkeep, and rest
 - inspectable decision logs
 - basic emergence metrics
 - local SQLite and JSONL artifacts

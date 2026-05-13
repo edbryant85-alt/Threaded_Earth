@@ -148,3 +148,45 @@ def test_resource_events_and_household_state_are_consistent(tmp_path, monkeypatc
             assert household is not None
             assert household.stored_resources[resource.resource_type] == resource.quantity
             assert resource.quantity >= 0
+
+
+def test_household_upkeep_shortage_events_and_needs(tmp_path, monkeypatch):
+    monkeypatch.setattr("threaded_earth.paths.ARTIFACTS_DIR", tmp_path)
+    config = load_config()
+    config.simulation.starting_resources.grain_per_household = 0
+    config.simulation.starting_resources.fish_per_household = 0
+    config.simulation.upkeep.daily_food_need_per_agent = 1.0
+    config.simulation.upkeep.food_shortage_memory_threshold = 1.0
+    SessionLocal = session_factory(tmp_path / "test.sqlite")
+    with SessionLocal() as session:
+        initialize_run(session, "run-test", 53, config)
+        first_agent_before = session.get(Agent, "agent-001").needs["food"]
+        run_simulation(session, "run-test", 1, 53, config)
+        shortage = session.query(Event).filter(Event.run_id == "run-test", Event.event_type == "household_shortage").first()
+        first_agent_after = session.get(Agent, "agent-001").needs["food"]
+        memory = session.query(Memory).filter(Memory.agent_id == "agent-001").first()
+
+    assert shortage is not None
+    assert shortage.payload["shortage_amount"] > 0
+    assert first_agent_after < first_agent_before
+    assert memory is not None
+
+
+def test_simulation_resource_path_is_deterministic_by_seed(tmp_path, monkeypatch):
+    monkeypatch.setattr("threaded_earth.paths.ARTIFACTS_DIR", tmp_path)
+    config = load_config()
+    summaries = []
+    for index in range(2):
+        SessionLocal = session_factory(tmp_path / f"test-{index}.sqlite")
+        run_id = f"run-test-{index}"
+        with SessionLocal() as session:
+            initialize_run(session, run_id, 59, config)
+            run_simulation(session, run_id, 2, 59, config)
+            summaries.append(
+                [
+                    (event.tick, event.event_type, event.actor, event.target, event.summary)
+                    for event in session.query(Event).filter(Event.run_id == run_id).order_by(Event.tick, Event.event_type, Event.summary).all()
+                ]
+            )
+
+    assert summaries[0] == summaries[1]

@@ -218,6 +218,8 @@ def _household_resource_lines(session: Session, run_id: str) -> list[str]:
         )
     rows = metric_delta_rows(run_id)
     resource_changes = []
+    upkeep_lines = []
+    repeated_shortages: dict[str, int] = {}
     previous_food = None
     previous_materials = None
     for row in rows:
@@ -229,6 +231,15 @@ def _household_resource_lines(session: Session, run_id: str) -> list[str]:
         food_delta = "n/a" if previous_food is None else f"{food - previous_food:+.2f}"
         material_delta = "n/a" if previous_materials is None else f"{materials - previous_materials:+.2f}"
         resource_changes.append(f"- tick {row['tick']}: food={food} ({food_delta}); materials={materials} ({material_delta})")
+        upkeep = row.get("upkeep_summary") or {}
+        if upkeep:
+            upkeep_lines.append(
+                f"- tick {row['tick']}: consumed={upkeep.get('food_consumed_this_tick', 0)}; "
+                f"shortage={upkeep.get('total_shortage_amount', 0)}; "
+                f"households_with_shortage={upkeep.get('households_with_shortage', 0)}"
+            )
+            for household_id in upkeep.get("shortage_household_ids", []):
+                repeated_shortages[household_id] = repeated_shortages.get(household_id, 0) + 1
         previous_food = food
         previous_materials = materials
     influenced = [
@@ -245,6 +256,8 @@ def _household_resource_lines(session: Session, run_id: str) -> list[str]:
         f"- total materials: {summary['total_materials']}",
         f"- average food per household: {summary['average_food_per_household']}",
         f"- households under scarcity threshold: {summary['households_below_scarcity_threshold']}",
+        f"- repeated shortage households: {', '.join(f'{household}={count}' for household, count in sorted(repeated_shortages.items())) or 'none'}",
+        *(upkeep_lines[:10] or ["- consumption by tick: no upkeep snapshots available."]),
         *(notable_transfers or ["- notable transfers: none recorded."]),
         *(resource_changes[:8] or ["- resource changes by tick: no snapshot resource summaries available."]),
         *(examples or ["- examples: no resource-influenced decisions found."]),

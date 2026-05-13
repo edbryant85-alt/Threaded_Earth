@@ -33,12 +33,20 @@ class DecisionConfig(BaseModel):
     memory_salience_threshold: float = 0.62
 
 
+class UpkeepConfig(BaseModel):
+    daily_food_need_per_agent: float = 1.0
+    food_shortage_memory_threshold: float = 1.0
+    material_decay_enabled: bool = False
+    material_decay_per_household: float = 0.0
+
+
 class SimulationConfig(BaseModel):
     population_size: int = 50
     settlement: SettlementConfig
     starting_resources: StartingResourcesConfig = Field(default_factory=StartingResourcesConfig)
     household: HouseholdConfig = Field(default_factory=HouseholdConfig)
     decision: DecisionConfig = Field(default_factory=DecisionConfig)
+    upkeep: UpkeepConfig = Field(default_factory=UpkeepConfig)
 
 
 class ThreadedEarthConfig(BaseModel):

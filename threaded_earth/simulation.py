@@ -14,7 +14,7 @@ from threaded_earth.memory import retrieve_relevant_memories
 from threaded_earth.metrics import write_metrics
 from threaded_earth.models import Agent, Decision, Household, Memory, Relationship, Run
 from threaded_earth.paths import ensure_artifact_dirs
-from threaded_earth.resources import add_household_resource, household_food, transfer_household_resource
+from threaded_earth.resources import add_household_resource, consume_household_food, household_food, transfer_household_resource
 from threaded_earth.snapshots import write_snapshot
 
 
@@ -51,7 +51,7 @@ def run_simulation(session: Session, run_id: str, days: int, seed: int, config: 
 
     run.status = "running"
     for tick in range(1, days + 1):
-        _simulate_tick(session, run_id, tick, rng)
+        _simulate_tick(session, run_id, tick, rng, config)
         write_metrics(session, run_id)
         write_snapshot(session, run_id, tick)
         session.commit()
@@ -60,11 +60,12 @@ def run_simulation(session: Session, run_id: str, days: int, seed: int, config: 
     session.commit()
 
 
-def _simulate_tick(session: Session, run_id: str, tick: int, rng: random.Random) -> None:
+def _simulate_tick(session: Session, run_id: str, tick: int, rng: random.Random, config: ThreadedEarthConfig) -> None:
     agents = session.query(Agent).filter(Agent.run_id == run_id, Agent.status == "active").order_by(Agent.neutral_id).all()
     agents_by_id = {agent.neutral_id: agent for agent in agents}
     households = {household.household_id: household for household in session.query(Household).filter(Household.run_id == run_id)}
     households_by_agent = {agent.neutral_id: households[agent.household_id] for agent in agents}
+    _apply_household_upkeep(session, run_id, tick, households, agents, config)
     for agent in agents:
         household = households[agent.household_id]
         relationships = (
@@ -117,6 +118,53 @@ def _record_decision(session: Session, run_id: str, agent: Agent, tick: int, tra
             uncertainty_notes=trace.uncertainty_notes,
         )
     )
+
+
+def _apply_household_upkeep(
+    session: Session,
+    run_id: str,
+    tick: int,
+    households: dict[str, Household],
+    agents: list[Agent],
+    config: ThreadedEarthConfig,
+) -> None:
+    members_by_household: dict[str, list[Agent]] = {household_id: [] for household_id in households}
+    for agent in agents:
+        members_by_household.setdefault(agent.household_id, []).append(agent)
+    upkeep = config.simulation.upkeep
+    for household_id, household in sorted(households.items()):
+        members = members_by_household.get(household_id, [])
+        requested = len(members) * upkeep.daily_food_need_per_agent
+        result = consume_household_food(session, run_id, household_id, requested)
+        material_decay = 0.0
+        if upkeep.material_decay_enabled and upkeep.material_decay_per_household > 0:
+            material_decay = abs(add_household_resource(session, run_id, household_id, "reeds", -upkeep.material_decay_per_household))
+        payload = {
+            "household_id": household_id,
+            "member_count": len(members),
+            "daily_food_need_per_agent": upkeep.daily_food_need_per_agent,
+            "food_requested": result["requested_food"],
+            "food_consumed": result["consumed_food"],
+            "shortage_amount": result["shortage_amount"],
+            "consumed_by_type": result["consumed_by_type"],
+            "material_decay": material_decay,
+            "household_food_after": household_food(household),
+        }
+        event_type = "household_shortage" if result["shortage_amount"] > 0 else "household_upkeep"
+        summary = (
+            f"{household.household_name} consumed {result['consumed_food']} food for daily upkeep."
+            if result["shortage_amount"] <= 0
+            else f"{household.household_name} consumed {result['consumed_food']} food and faced a shortage of {result['shortage_amount']}."
+        )
+        event = record_event(session, run_id, tick, event_type, None, household_id, payload, summary)
+        if result["shortage_amount"] > 0:
+            shortage_per_member = result["shortage_amount"] / len(members) if members else 0.0
+            for member in members:
+                needs = dict(member.needs)
+                needs["food"] = max(0, needs.get("food", 0) - round(2 + shortage_per_member * 4, 2))
+                member.needs = needs
+                if result["shortage_amount"] >= upkeep.food_shortage_memory_threshold:
+                    _remember(session, run_id, tick, member.neutral_id, event.event_id, 0.7, summary)
 
 
 def _apply_action(

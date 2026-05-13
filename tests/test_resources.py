@@ -7,6 +7,7 @@ from threaded_earth.db import session_factory
 from threaded_earth.models import Agent, Household, Resource, Run
 from threaded_earth.resources import (
     add_household_resource,
+    consume_household_food,
     household_food,
     household_resource_summary,
     transfer_household_resource,
@@ -51,6 +52,31 @@ def test_transfer_cannot_create_negative_resources_and_records_limited_status(tm
     assert transfer["status"] == "limited"
     assert transfer["transferred_quantity"] == 0.4
     assert source.stored_resources["grain"] == 0.0
+
+
+def test_household_food_decreases_by_member_count(tmp_path):
+    SessionLocal = session_factory(tmp_path / "test.sqlite")
+    with SessionLocal() as session:
+        _seed_household(session, "hh-001", grain=10.0, fish=2.0)
+        household = session.get(Household, "hh-001")
+        household.members = ["agent-001", "agent-002", "agent-003"]
+        result = consume_household_food(session, "run-test", "hh-001", len(household.members) * 1.0)
+
+    assert result["consumed_food"] == 3.0
+    assert result["shortage_amount"] == 0.0
+    assert household_food(household) == 9.0
+
+
+def test_upkeep_shortage_never_makes_resources_negative(tmp_path):
+    SessionLocal = session_factory(tmp_path / "test.sqlite")
+    with SessionLocal() as session:
+        _seed_household(session, "hh-001", grain=0.25, fish=0.0)
+        result = consume_household_food(session, "run-test", "hh-001", 3.0)
+        household = session.get(Household, "hh-001")
+
+    assert result["consumed_food"] == 0.25
+    assert result["shortage_amount"] == 2.75
+    assert household_food(household) == 0.0
 
 
 def test_scarcity_increases_resource_seeking_score():

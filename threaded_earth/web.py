@@ -10,7 +10,7 @@ from threaded_earth.goals import goal_stats
 from threaded_earth.memory import memory_stats
 from threaded_earth.models import Agent, Decision, Event, Goal, Memory, Run
 from threaded_earth.paths import ARTIFACTS_DIR, db_path, metrics_path
-from threaded_earth.resources import household_resource_summary
+from threaded_earth.resources import household_resource_summary, upkeep_stats_for_tick
 from threaded_earth.snapshots import DELTA_METRICS, metric_delta_rows, snapshot_inventory
 from threaded_earth.targeting import SOCIAL_ACTIONS, target_stats
 
@@ -72,6 +72,12 @@ def run_detail(run_id: str) -> str:
             for event in events
             if event.payload.get("resource_transfer") or event.event_type == "resource_change"
         ][:10]
+        latest_upkeep = upkeep_stats_for_tick(session, run_id, inventory.latest_tick or 0)
+        recent_shortages = [
+            event
+            for event in events
+            if event.event_type == "household_shortage"
+        ][:10]
         influenced_count = sum(1 for decision in influenced_decisions if decision.retrieved_memory_ids)
         goal_influenced_count = sum(1 for decision in influenced_decisions if decision.active_goal_ids)
     metrics = {}
@@ -105,12 +111,16 @@ def run_detail(run_id: str) -> str:
         for decision in recent_targeted
     )
     household_resource_rows = "".join(
-        f"<tr><td>{household['household_id']}</td><td>{household['household_name']}</td><td>{household['food']}</td><td>{household['materials']}</td></tr>"
+        f"<tr><td>{household['household_id']}</td><td>{household['household_name']}</td><td>{household['member_count']}</td><td>{household['food']}</td><td>{household['food_per_member']}</td><td>{household['materials']}</td></tr>"
         for household in resource_summary["households"]
     )
     resource_event_rows = "".join(
         f"<tr><td>{event.tick}</td><td>{event.event_type}</td><td>{event.summary}</td></tr>"
         for event in recent_resource_events
+    )
+    shortage_rows = "".join(
+        f"<tr><td>{event.tick}</td><td>{event.target}</td><td>{event.payload.get('shortage_amount')}</td><td>{event.summary}</td></tr>"
+        for event in recent_shortages
     )
     latest_tick = inventory.latest_tick if inventory.latest_tick is not None else "none"
     expected_ticks = inventory.expected_ticks if inventory.expected_ticks is not None else "unknown"
@@ -137,7 +147,9 @@ def run_detail(run_id: str) -> str:
         <table><tr><th>Tick</th><th>Actor</th><th>Action</th><th>Target</th><th>Reasons</th></tr>{recent_target_rows or '<tr><td colspan="5">No recent targeted social actions.</td></tr>'}</table>
         <h2>Household Resources</h2>
         <p>Total food: <strong>{resource_summary['total_food']}</strong> | Total materials: <strong>{resource_summary['total_materials']}</strong> | Average food: <strong>{resource_summary['average_food_per_household']}</strong> | Scarce households: <strong>{resource_summary['households_below_scarcity_threshold']}</strong></p>
-        <table><tr><th>Household</th><th>Name</th><th>Food</th><th>Materials</th></tr>{household_resource_rows}</table>
+        <p>Latest daily consumption: <strong>{latest_upkeep['food_consumed_this_tick']}</strong> | Latest shortage: <strong>{latest_upkeep['total_shortage_amount']}</strong> | Households with shortage: <strong>{latest_upkeep['households_with_shortage']}</strong></p>
+        <table><tr><th>Household</th><th>Name</th><th>Members</th><th>Food</th><th>Food / Member</th><th>Materials</th></tr>{household_resource_rows}</table>
+        <table><tr><th>Tick</th><th>Household</th><th>Shortage</th><th>Shortage Event</th></tr>{shortage_rows or '<tr><td colspan="4">No recent shortages.</td></tr>'}</table>
         <table><tr><th>Tick</th><th>Type</th><th>Resource Event</th></tr>{resource_event_rows or '<tr><td colspan="3">No recent resource events.</td></tr>'}</table>
         <h2>Recent Events</h2><table><tr><th>Tick</th><th>Type</th><th>Summary</th></tr>{event_rows}</table>
         <h2>Recent Decisions</h2><table><tr><th>Tick</th><th>Agent</th><th>Selected</th><th>Confidence</th></tr>{decision_rows}</table>

@@ -34,6 +34,34 @@ def add_household_resource(
     return round(resource.quantity - before, 2)
 
 
+def consume_household_food(
+    session: Session,
+    run_id: str,
+    household_id: str,
+    requested_quantity: float,
+) -> dict[str, Any]:
+    remaining = round(max(0.0, requested_quantity), 2)
+    consumed_by_type: dict[str, float] = {}
+    total_consumed = 0.0
+    for resource_type in FOOD_TYPES:
+        if remaining <= 0:
+            break
+        resource = _resource_row(session, run_id, household_id, resource_type)
+        consumed = round(min(resource.quantity, remaining), 2)
+        resource.quantity = round(resource.quantity - consumed, 2)
+        _sync_household_resource(session, household_id, resource_type, resource.quantity)
+        consumed_by_type[resource_type] = consumed
+        total_consumed = round(total_consumed + consumed, 2)
+        remaining = round(remaining - consumed, 2)
+    return {
+        "requested_food": round(requested_quantity, 2),
+        "consumed_food": total_consumed,
+        "shortage_amount": round(max(0.0, requested_quantity - total_consumed), 2),
+        "consumed_by_type": consumed_by_type,
+        "status": "shortage" if total_consumed < requested_quantity else "met",
+    }
+
+
 def transfer_household_resource(
     session: Session,
     run_id: str,
@@ -86,8 +114,10 @@ def household_resource_summary(session: Session, run_id: str) -> dict[str, Any]:
             {
                 "household_id": household.household_id,
                 "household_name": household.household_name,
+                "member_count": len(household.members),
                 "food": household_food(household),
                 "materials": household_materials(household),
+                "food_per_member": round(household_food(household) / len(household.members), 2) if household.members else 0.0,
                 "stored_resources": dict(household.stored_resources),
             }
             for household in households
@@ -108,6 +138,30 @@ def transfers_for_tick(session: Session, run_id: str, tick: int) -> list[dict[st
         if transfer:
             transfers.append({"event_id": event.event_id, "event_type": event.event_type, **transfer})
     return transfers
+
+
+def upkeep_stats_for_tick(session: Session, run_id: str, tick: int) -> dict[str, Any]:
+    events = (
+        session.query(Event)
+        .filter(Event.run_id == run_id, Event.tick == tick, Event.event_type.in_(("household_upkeep", "household_shortage")))
+        .order_by(Event.event_id)
+        .all()
+    )
+    consumed = 0.0
+    shortage = 0.0
+    shortage_households: set[str] = set()
+    for event in events:
+        consumed += float(event.payload.get("food_consumed", 0.0))
+        shortage_amount = float(event.payload.get("shortage_amount", 0.0))
+        shortage += shortage_amount
+        if shortage_amount > 0 and event.target:
+            shortage_households.add(event.target)
+    return {
+        "food_consumed_this_tick": round(consumed, 2),
+        "households_with_shortage": len(shortage_households),
+        "shortage_household_ids": sorted(shortage_households),
+        "total_shortage_amount": round(shortage, 2),
+    }
 
 
 def recent_transfer_events(session: Session, run_id: str, limit: int = 10) -> list[Event]:
