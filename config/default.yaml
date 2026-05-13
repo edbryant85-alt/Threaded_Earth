@@ -1,0 +1,31 @@
+simulation:
+  population_size: 50
+  settlement:
+    location_id: river_valley
+    name: Threaded River Valley
+    symbolic_description: A single early agrarian settlement beside a braided river, with gardens, reed beds, fishing shallows, and shared work spaces.
+  starting_resources:
+    grain_per_household: 18
+    fish_per_household: 6
+    reeds_per_household: 5
+    tools_per_household: 3
+  household:
+    min_size: 3
+    max_size: 6
+  decision:
+    conflict_threshold: 0.72
+    cooperation_threshold: 0.58
+    memory_salience_threshold: 0.62
+
+archetypes:
+  - cultivator
+  - gatherer
+  - fisher
+  - hunter
+  - craft worker
+  - healer
+  - elder
+  - storyteller
+  - builder
+  - trader
+  - apprentice
