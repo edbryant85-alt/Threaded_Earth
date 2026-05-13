@@ -44,6 +44,9 @@ def test_simulation_tick_event_logging_and_report(tmp_path, monkeypatch):
         assert isinstance(decision.retrieved_memory_ids, list)
         assert isinstance(decision.memory_score_adjustments, dict)
         assert decision.memory_influence_summary
+        assert isinstance(decision.active_goal_ids, list)
+        assert isinstance(decision.goal_score_adjustments, dict)
+        assert decision.goal_influence_summary
         assert session.query(Event).count() > 1
         assert (tmp_path / "run-test" / "logs" / "events.jsonl").exists()
         assert (tmp_path / "run-test" / "snapshots" / "tick_1.json").exists()

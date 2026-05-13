@@ -4,8 +4,9 @@ from pathlib import Path
 
 from sqlalchemy.orm import Session
 
+from threaded_earth.goals import goal_stats
 from threaded_earth.metrics import compute_metrics, write_metrics
-from threaded_earth.models import Decision, Event, Memory, Resource, Run
+from threaded_earth.models import Decision, Event, Goal, Memory, Resource, Run
 from threaded_earth.paths import report_path
 from threaded_earth.snapshots import DELTA_METRICS, metric_delta_rows
 
@@ -33,6 +34,7 @@ def generate_report(session: Session, run_id: str) -> Path:
     metric_lines = [f"- {key}: {value}" for key, value in metrics.items()]
     delta_lines = _metric_delta_lines(run_id)
     memory_lines = _memory_influence_lines(session, run_id)
+    goal_lines = _goal_dynamics_lines(session, run_id)
 
     path = report_path(run_id)
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -55,6 +57,9 @@ def generate_report(session: Session, run_id: str) -> Path:
                 "",
                 "## Memory Influence",
                 *memory_lines,
+                "",
+                "## Goal Dynamics",
+                *goal_lines,
                 "",
                 "## Major Events",
                 *(event_lines or ["- No major events recorded."]),
@@ -121,4 +126,31 @@ def _memory_influence_lines(session: Session, run_id: str) -> list[str]:
         f"- decisions influenced by memory: {len(influenced)} of {len(decisions)}",
         f"- most commonly retrieved memory types: {common_types}",
         *(examples or ["- examples: no decisions had non-zero memory score adjustments."]),
+    ]
+
+
+def _goal_dynamics_lines(session: Session, run_id: str) -> list[str]:
+    stats = goal_stats(session, run_id)
+    decisions = session.query(Decision).filter(Decision.run_id == run_id).order_by(Decision.tick, Decision.agent_id).all()
+    influenced = [decision for decision in decisions if decision.active_goal_ids]
+    goals = session.query(Goal).filter(Goal.run_id == run_id).order_by(Goal.priority.desc(), Goal.goal_id).all()
+    by_type = ", ".join(f"{goal_type}={count}" for goal_type, count in stats["goals_by_type"].items()) or "none"
+    created_count = len(goals)
+    examples = [
+        f"- example tick {decision.tick} {decision.agent_id}: selected {decision.selected_action['action']}; "
+        f"{decision.goal_influence_summary}"
+        for decision in influenced
+        if decision.goal_score_adjustments
+    ][:3]
+    notable = [
+        f"- high priority {goal.agent_id}: {goal.goal_type} priority={goal.priority:.2f} status={goal.status} reason={goal.source_reason}"
+        for goal in goals
+        if goal.status == "active"
+    ][:5]
+    return [
+        f"- active goals by type: {by_type}",
+        f"- goals created/satisfied/abandoned: {created_count}/{stats['satisfied_count']}/{stats['abandoned_count']}",
+        f"- decisions influenced by goals: {len(influenced)} of {len(decisions)}",
+        *(examples or ["- examples: no decisions had non-zero goal score adjustments."]),
+        *(notable or ["- notable agents: no active high-priority goals."]),
     ]

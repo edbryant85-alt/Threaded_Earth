@@ -76,6 +76,22 @@ class Memory(Base):
     created_tick: Mapped[int] = mapped_column(Integer, nullable=False)
 
 
+class Goal(Base):
+    __tablename__ = "goals"
+
+    goal_id: Mapped[str] = mapped_column(String, primary_key=True)
+    run_id: Mapped[str] = mapped_column(ForeignKey("runs.run_id"), index=True)
+    agent_id: Mapped[str] = mapped_column(String, index=True)
+    goal_type: Mapped[str] = mapped_column(String, index=True)
+    priority: Mapped[float] = mapped_column(Float, nullable=False)
+    status: Mapped[str] = mapped_column(String, default="active")
+    created_tick: Mapped[int] = mapped_column(Integer, nullable=False)
+    updated_tick: Mapped[int] = mapped_column(Integer, nullable=False)
+    source_reason: Mapped[str] = mapped_column(Text, nullable=False)
+    progress: Mapped[float] = mapped_column(Float, default=0.0)
+    notes: Mapped[str] = mapped_column(Text, default="")
+
+
 class Resource(Base):
     __tablename__ = "resources"
 
@@ -122,5 +138,8 @@ class Decision(Base):
     retrieved_memory_ids: Mapped[list[str]] = mapped_column(JSON, default=list)
     memory_influence_summary: Mapped[str] = mapped_column(Text, default="No memories retrieved.")
     memory_score_adjustments: Mapped[dict[str, float]] = mapped_column(JSON, default=dict)
+    active_goal_ids: Mapped[list[str]] = mapped_column(JSON, default=list)
+    goal_influence_summary: Mapped[str] = mapped_column(Text, default="No active goals applied.")
+    goal_score_adjustments: Mapped[dict[str, float]] = mapped_column(JSON, default=dict)
     confidence: Mapped[float] = mapped_column(Float, nullable=False)
     uncertainty_notes: Mapped[str] = mapped_column(Text, nullable=False)

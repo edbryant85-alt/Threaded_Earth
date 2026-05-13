@@ -9,6 +9,7 @@ from threaded_earth.cognition import DecisionTrace, choose_action
 from threaded_earth.config import ThreadedEarthConfig
 from threaded_earth.events import record_event
 from threaded_earth.generation import create_initial_state
+from threaded_earth.goals import update_agent_goals
 from threaded_earth.memory import retrieve_relevant_memories
 from threaded_earth.metrics import write_metrics
 from threaded_earth.models import Agent, Decision, Household, Memory, Relationship, Resource, Run
@@ -69,7 +70,8 @@ def _simulate_tick(session: Session, run_id: str, tick: int, rng: random.Random)
             .all()
         )
         retrieved_memories = retrieve_relevant_memories(session, run_id, agent.neutral_id, tick, relationships)
-        trace = choose_action(agent, household, relationships, rng, tick, retrieved_memories)
+        active_goals = update_agent_goals(session, run_id, agent, household, relationships, retrieved_memories, tick)
+        trace = choose_action(agent, household, relationships, rng, tick, retrieved_memories, active_goals)
         _record_decision(session, run_id, agent, tick, trace)
         _apply_action(session, run_id, tick, rng, agent, household, relationships, trace)
         _decay_needs(agent)
@@ -90,10 +92,16 @@ def _record_decision(session: Session, run_id: str, agent: Agent, tick: int, tra
                 f"retrieved_memory_ids={trace.retrieved_memory_ids}",
                 f"memory_influence_summary={trace.memory_influence_summary}",
                 f"memory_score_adjustments={trace.memory_score_adjustments}",
+                f"active_goal_ids={trace.active_goal_ids}",
+                f"goal_influence_summary={trace.goal_influence_summary}",
+                f"goal_score_adjustments={trace.goal_score_adjustments}",
             ],
             retrieved_memory_ids=trace.retrieved_memory_ids,
             memory_influence_summary=trace.memory_influence_summary,
             memory_score_adjustments=trace.memory_score_adjustments,
+            active_goal_ids=trace.active_goal_ids,
+            goal_influence_summary=trace.goal_influence_summary,
+            goal_score_adjustments=trace.goal_score_adjustments,
             confidence=trace.confidence,
             uncertainty_notes=trace.uncertainty_notes,
         )

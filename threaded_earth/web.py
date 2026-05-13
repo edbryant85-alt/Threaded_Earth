@@ -6,8 +6,9 @@ from fastapi import FastAPI, HTTPException
 from fastapi.responses import HTMLResponse
 
 from threaded_earth.db import session_factory
+from threaded_earth.goals import goal_stats
 from threaded_earth.memory import memory_stats
-from threaded_earth.models import Agent, Decision, Event, Memory, Run
+from threaded_earth.models import Agent, Decision, Event, Goal, Memory, Run
 from threaded_earth.paths import ARTIFACTS_DIR, db_path, metrics_path
 from threaded_earth.snapshots import DELTA_METRICS, metric_delta_rows, snapshot_inventory
 
@@ -37,6 +38,14 @@ def run_detail(run_id: str) -> str:
         decisions = session.query(Decision).filter(Decision.run_id == run_id).order_by(Decision.tick.desc()).limit(10).all()
         inventory = snapshot_inventory(session, run_id)
         memory_summary = memory_stats(session, run_id)
+        goal_summary = goal_stats(session, run_id)
+        recent_goals = (
+            session.query(Goal)
+            .filter(Goal.run_id == run_id, Goal.status == "active")
+            .order_by(Goal.priority.desc(), Goal.updated_tick.desc(), Goal.goal_id)
+            .limit(10)
+            .all()
+        )
         recent_memories = (
             session.query(Memory)
             .filter(Memory.run_id == run_id)
@@ -50,6 +59,7 @@ def run_detail(run_id: str) -> str:
             .all()
         )
         influenced_count = sum(1 for decision in influenced_decisions if decision.retrieved_memory_ids)
+        goal_influenced_count = sum(1 for decision in influenced_decisions if decision.active_goal_ids)
     metrics = {}
     if metrics_path(run_id).exists():
         metrics = json.loads(metrics_path(run_id).read_text(encoding="utf-8"))
@@ -63,6 +73,14 @@ def run_detail(run_id: str) -> str:
     memory_rows = "".join(
         f"<tr><td>{memory.created_tick}</td><td>{memory.agent_id}</td><td>{memory.salience:.2f}</td><td>{memory.summary}</td></tr>"
         for memory in recent_memories
+    )
+    goal_type_rows = "".join(
+        f"<tr><td>{goal_type}</td><td>{count}</td></tr>"
+        for goal_type, count in goal_summary["goals_by_type"].items()
+    )
+    goal_rows = "".join(
+        f"<tr><td>{goal.agent_id}</td><td>{goal.goal_type}</td><td>{goal.priority:.2f}</td><td>{goal.updated_tick}</td><td>{goal.source_reason}</td></tr>"
+        for goal in recent_goals
     )
     latest_tick = inventory.latest_tick if inventory.latest_tick is not None else "none"
     expected_ticks = inventory.expected_ticks if inventory.expected_ticks is not None else "unknown"
@@ -79,6 +97,10 @@ def run_detail(run_id: str) -> str:
         <h2>Memory Observability</h2>
         <p>Total memories: <strong>{memory_summary['total_memories']}</strong> | Average per agent: <strong>{memory_summary['average_memories_per_agent']}</strong> | High salience: <strong>{memory_summary['high_salience_memory_count']}</strong> | Memory-influenced decisions: <strong>{influenced_count}</strong></p>
         <table><tr><th>Tick</th><th>Agent</th><th>Salience</th><th>Memory</th></tr>{memory_rows or '<tr><td colspan="4">No memories recorded.</td></tr>'}</table>
+        <h2>Goal Observability</h2>
+        <p>Active goals: <strong>{goal_summary['total_active_goals']}</strong> | Average per agent: <strong>{goal_summary['average_active_goals_per_agent']}</strong> | Satisfied: <strong>{goal_summary['satisfied_count']}</strong> | Abandoned: <strong>{goal_summary['abandoned_count']}</strong> | Goal-influenced decisions: <strong>{goal_influenced_count}</strong></p>
+        <table><tr><th>Goal Type</th><th>Active Count</th></tr>{goal_type_rows or '<tr><td colspan="2">No active goals.</td></tr>'}</table>
+        <table><tr><th>Agent</th><th>Goal</th><th>Priority</th><th>Updated Tick</th><th>Reason</th></tr>{goal_rows or '<tr><td colspan="5">No active goals.</td></tr>'}</table>
         <h2>Recent Events</h2><table><tr><th>Tick</th><th>Type</th><th>Summary</th></tr>{event_rows}</table>
         <h2>Recent Decisions</h2><table><tr><th>Tick</th><th>Agent</th><th>Selected</th><th>Confidence</th></tr>{decision_rows}</table>
         """,

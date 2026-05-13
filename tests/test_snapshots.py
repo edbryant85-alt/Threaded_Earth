@@ -36,6 +36,7 @@ def test_snapshot_creation_path_and_json_shape(tmp_path, monkeypatch):
         assert data["relationships_summary"]["count"] > 0
         assert "totals" in data["resources_summary"]
         assert "total_memories" in data["memory_summary"]
+        assert "total_active_goals" in data["goal_summary"]
         assert "relationship_density" in data["metrics"]
         assert len(data["event_ids"]) > 0
         assert session.query(Decision).count() == 100
@@ -101,6 +102,7 @@ def test_report_includes_metric_deltas(tmp_path, monkeypatch):
     text = path.read_text(encoding="utf-8")
     assert "## Tick Metric Deltas" in text
     assert "## Memory Influence" in text
+    assert "## Goal Dynamics" in text
     assert "relationship_density" in text
     assert "conflict_frequency" in text
     assert "resource_stress" in text
@@ -120,4 +122,5 @@ def test_dashboard_run_page_renders_snapshot_information(tmp_path, monkeypatch):
     assert "Replay data: <strong>complete</strong>" in html
     assert "Per-Tick Metrics" in html
     assert "Memory Observability" in html
+    assert "Goal Observability" in html
     assert "Latest tick: <strong>2</strong>" in html
