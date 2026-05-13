@@ -7,7 +7,7 @@ from threaded_earth.config import load_config
 from threaded_earth.db import session_factory
 from threaded_earth.events import event_log_path
 from threaded_earth.models import Agent, Decision, Event, Household, Run
-from threaded_earth.paths import report_path
+from threaded_earth.paths import report_path, snapshot_path
 from threaded_earth.reports import generate_report
 from threaded_earth.simulation import initialize_run, run_simulation
 
@@ -41,6 +41,7 @@ def test_simulation_tick_event_logging_and_report(tmp_path, monkeypatch):
         assert session.query(Decision).count() == 50
         assert session.query(Event).count() > 1
         assert (tmp_path / "run-test" / "logs" / "events.jsonl").exists()
+        assert (tmp_path / "run-test" / "snapshots" / "tick_1.json").exists()
         assert path.exists()
         assert "Notable Decisions" in path.read_text(encoding="utf-8")
 
@@ -62,9 +63,11 @@ def test_cli_run_report_replay(tmp_path, monkeypatch):
     assert (tmp_path / run_id / "threaded_earth.sqlite").exists()
     assert event_log_path(run_id).exists()
     assert report_path(run_id).exists()
+    assert snapshot_path(run_id, 1).exists()
 
     report_result = runner.invoke(app, ["report", "--run-id", run_id])
     assert report_result.exit_code == 0, report_result.output
     replay_result = runner.invoke(app, ["replay", "--run-id", run_id])
     assert replay_result.exit_code == 0, replay_result.output
+    assert "snapshot_replay=complete" in replay_result.output
     assert "run_initialized" in replay_result.output

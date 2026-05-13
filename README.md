@@ -33,7 +33,7 @@ artifacts/<run_id>/
   logs/events.jsonl
   reports/report.md
   exports/metrics.json
-  snapshots/
+  snapshots/tick_<N>.json
 ```
 
 ## Architecture Notes
@@ -44,6 +44,7 @@ artifacts/<run_id>/
 - `threaded_earth/simulation.py`: one daily tick loop with explicit state transitions.
 - `threaded_earth/events.py`: DB event creation plus JSONL logging.
 - `threaded_earth/reports.py`: Markdown research report generation.
+- `threaded_earth/snapshots.py`: compact per-tick state snapshots and metric deltas.
 - `threaded_earth/web.py`: simple FastAPI HTML dashboard.
 - `threaded_earth/cli.py`: Typer command surface.
 - `tools/checkpoint.py`: stages source changes, generates a local commit message, commits, and pushes.

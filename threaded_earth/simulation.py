@@ -12,6 +12,7 @@ from threaded_earth.generation import create_initial_state
 from threaded_earth.metrics import write_metrics
 from threaded_earth.models import Agent, Decision, Household, Memory, Relationship, Resource, Run
 from threaded_earth.paths import ensure_artifact_dirs
+from threaded_earth.snapshots import write_snapshot
 
 
 def make_run_id(seed: int) -> str:
@@ -49,6 +50,7 @@ def run_simulation(session: Session, run_id: str, days: int, seed: int, config: 
     for tick in range(1, days + 1):
         _simulate_tick(session, run_id, tick, rng)
         write_metrics(session, run_id)
+        write_snapshot(session, run_id, tick)
         session.commit()
     run.status = "complete"
     run.updated_at = datetime.now(timezone.utc)

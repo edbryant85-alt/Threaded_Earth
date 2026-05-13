@@ -28,6 +28,14 @@ def metrics_path(run_id: str) -> Path:
     return run_dir(run_id) / "exports" / "metrics.json"
 
 
+def snapshots_dir(run_id: str) -> Path:
+    return run_dir(run_id) / "snapshots"
+
+
+def snapshot_path(run_id: str, tick: int) -> Path:
+    return snapshots_dir(run_id) / f"tick_{tick}.json"
+
+
 def ensure_artifact_dirs(run_id: str) -> None:
     root = run_dir(run_id)
     for child in ("logs", "reports", "exports", "snapshots"):

@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 from threaded_earth.metrics import compute_metrics, write_metrics
 from threaded_earth.models import Decision, Event, Resource, Run
 from threaded_earth.paths import report_path
+from threaded_earth.snapshots import DELTA_METRICS, metric_delta_rows
 
 
 def generate_report(session: Session, run_id: str) -> Path:
@@ -30,6 +31,7 @@ def generate_report(session: Session, run_id: str) -> Path:
     ]
     event_lines = [f"- tick {event.tick} {event.event_type}: {event.summary}" for event in major_events]
     metric_lines = [f"- {key}: {value}" for key, value in metrics.items()]
+    delta_lines = _metric_delta_lines(run_id)
 
     path = report_path(run_id)
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -46,6 +48,9 @@ def generate_report(session: Session, run_id: str) -> Path:
                 "",
                 "## Basic Metrics",
                 *metric_lines,
+                "",
+                "## Tick Metric Deltas",
+                *delta_lines,
                 "",
                 "## Major Events",
                 *(event_lines or ["- No major events recorded."]),
@@ -69,3 +74,19 @@ def generate_report(session: Session, run_id: str) -> Path:
         encoding="utf-8",
     )
     return path
+
+
+def _metric_delta_lines(run_id: str) -> list[str]:
+    rows = metric_delta_rows(run_id)
+    if not rows:
+        return ["- No per-tick snapshots available; metric deltas unavailable."]
+    lines = []
+    for row in rows:
+        pieces = []
+        for key in DELTA_METRICS:
+            delta = row["deltas"].get(key)
+            value = row["metrics"].get(key, "unavailable")
+            delta_text = "n/a" if delta is None else f"{delta:+g}"
+            pieces.append(f"{key}={value} ({delta_text})")
+        lines.append(f"- tick {row['tick']}: " + "; ".join(pieces))
+    return lines

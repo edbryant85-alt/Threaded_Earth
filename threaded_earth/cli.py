@@ -12,6 +12,7 @@ from threaded_earth.events import append_jsonl
 from threaded_earth.models import Event
 from threaded_earth.paths import ARTIFACTS_DIR, DEFAULT_CONFIG_PATH, db_path, ensure_artifact_dirs, event_log_path, report_path
 from threaded_earth.reports import generate_report
+from threaded_earth.snapshots import snapshot_inventory
 from threaded_earth.simulation import initialize_run, make_run_id, run_simulation
 
 
@@ -47,6 +48,19 @@ def replay(run_id: str = typer.Option(..., help="Run id to replay.")) -> None:
     log_path = event_log_path(run_id)
     if not log_path.exists():
         raise typer.BadParameter(f"No event log found for {run_id}")
+    database = db_path(run_id)
+    if database.exists():
+        SessionLocal = session_factory(database)
+        with SessionLocal() as session:
+            inventory = snapshot_inventory(session, run_id)
+        expected = inventory.expected_ticks if inventory.expected_ticks is not None else "unknown"
+        latest = inventory.latest_tick if inventory.latest_tick is not None else "none"
+        typer.echo(
+            f"snapshot_replay={inventory.status} snapshots={inventory.count} "
+            f"expected_ticks={expected} latest_tick={latest}"
+        )
+    else:
+        typer.echo("snapshot_replay=unavailable snapshots=0 expected_ticks=unknown latest_tick=none")
     for line in log_path.read_text(encoding="utf-8").splitlines():
         record = json.loads(line)
         typer.echo(f"tick {record['tick']:>3} {record['event_type']}: {record['summary']}")
