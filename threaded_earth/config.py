@@ -43,6 +43,10 @@ class UpkeepConfig(BaseModel):
 class PropagationConfig(BaseModel):
     propagation_enabled: bool = True
     propagation_max_observers: int = 5
+    propagation_max_events_per_tick: int = 80
+    propagation_max_memories_per_tick: int = 80
+    propagation_min_source_event_importance: float = 0.55
+    propagation_cooldown_per_observer_subject_pair: bool = False
     propagation_strength: float = 0.2
     propagation_min_relationship_threshold: float = 0.62
     propagation_create_memories: bool = True

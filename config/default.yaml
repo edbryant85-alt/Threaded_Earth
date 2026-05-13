@@ -24,6 +24,10 @@ simulation:
   propagation:
     propagation_enabled: true
     propagation_max_observers: 5
+    propagation_max_events_per_tick: 80
+    propagation_max_memories_per_tick: 80
+    propagation_min_source_event_importance: 0.55
+    propagation_cooldown_per_observer_subject_pair: false
     propagation_strength: 0.2
     propagation_min_relationship_threshold: 0.62
     propagation_create_memories: true

@@ -6,7 +6,7 @@ from typing import Any
 from sqlalchemy.orm import Session
 
 from threaded_earth.memory import RetrievedMemory
-from threaded_earth.models import Agent, Decision, Goal, Household, Relationship
+from threaded_earth.models import Agent, Decision, Goal, Household, Relationship, RoleSignal
 
 
 SOCIAL_ACTIONS = {"cooperate", "share_food", "conflict_over_food", "avoid_conflict", "repair_relationship"}
@@ -39,6 +39,7 @@ def select_target_for_action(
     memories: list[RetrievedMemory],
     goals: list[Goal],
     households_by_agent: dict[str, Household] | None = None,
+    role_signals_by_agent: dict[str, list[RoleSignal]] | None = None,
 ) -> TargetSelection:
     if action not in SOCIAL_ACTIONS or not relationships:
         return TargetSelection(None, [], {}, [], {}, {})
@@ -49,7 +50,15 @@ def select_target_for_action(
         goal_factor = _goal_factor(action, relationship, goals)
         kin_bonus = 0.16 if relationship.kinship_relation == "household kin" else 0.0
         resource_bonus = _resource_bonus(action, relationship.target_agent, households_by_agent)
-        score = _base_score(action, relationship) + kin_bonus + memory_factor["score"] + goal_factor["score"] + resource_bonus
+        role_factor = _target_role_factor(action, relationship.target_agent, role_signals_by_agent)
+        score = (
+            _base_score(action, relationship)
+            + kin_bonus
+            + memory_factor["score"]
+            + goal_factor["score"]
+            + resource_bonus
+            + role_factor["score"]
+        )
         if action == "repair_relationship" and _hostility(relationship) < HOSTILITY_THRESHOLD:
             score -= 0.7
         scored.append(
@@ -62,6 +71,7 @@ def select_target_for_action(
                 "kinship_relation": relationship.kinship_relation,
                 "memory_factor": memory_factor,
                 "goal_factor": goal_factor,
+                "role_factor": role_factor,
                 "resource_bonus": round(resource_bonus, 3),
             }
         )
@@ -81,13 +91,18 @@ def select_target_for_action(
         for item in scored[:5]
         if item["goal_factor"]["score"] != 0
     }
+    role_factors = {
+        item["target_agent_id"]: item["role_factor"]
+        for item in scored[:5]
+        if item["role_factor"]["score"] != 0
+    }
     return TargetSelection(
         selected_target_agent_id=selected_id,
         target_selection_candidates=scored[:5],
         target_selection_scores=scores,
         target_selection_reasons=reasons,
         target_memory_factors=memory_factors,
-        target_goal_factors=goal_factors,
+        target_goal_factors={**goal_factors, "_role_factors": role_factors} if role_factors else goal_factors,
     )
 
 
@@ -98,6 +113,7 @@ def evaluate_target_aware_actions(
     memories: list[RetrievedMemory],
     goals: list[Goal],
     households_by_agent: dict[str, Household] | None = None,
+    role_signals_by_agent: dict[str, list[RoleSignal]] | None = None,
 ) -> TargetAwareActionEvaluation:
     action_scores: dict[str, float] = {}
     best_by_action: dict[str, Any] = {}
@@ -107,7 +123,9 @@ def evaluate_target_aware_actions(
     for action in actions:
         if action not in SOCIAL_ACTIONS:
             continue
-        selection = select_target_for_action(action, agent, relationships, memories, goals, households_by_agent)
+        selection = select_target_for_action(
+            action, agent, relationships, memories, goals, households_by_agent, role_signals_by_agent
+        )
         selections[action] = selection
         evaluated += len(selection.target_selection_candidates)
         best = selection.target_selection_candidates[0] if selection.target_selection_candidates else None
@@ -126,6 +144,7 @@ def evaluate_target_aware_actions(
             "kinship_relation": best["kinship_relation"],
             "memory_factor": best["memory_factor"],
             "goal_factor": best["goal_factor"],
+            "role_factor": best["role_factor"],
             "resource_bonus": best["resource_bonus"],
         }
         reasons.extend(_target_aware_reasons(action, best, contribution))
@@ -225,6 +244,8 @@ def _target_aware_reasons(action: str, best: dict[str, Any], contribution: float
         reasons.append(f"{action}:negative_memory")
     if best["goal_factor"]["goal_types"]:
         reasons.append(f"{action}:goal_{'+'.join(best['goal_factor']['goal_types'])}")
+    if best.get("role_factor", {}).get("role_names"):
+        reasons.append(f"{action}:target_role_{'+'.join(best['role_factor']['role_names'])}")
     if best["resource_bonus"] > 0:
         reasons.append(f"{action}:target_scarcity")
     return reasons
@@ -305,6 +326,28 @@ def _resource_bonus(
     household = households_by_agent[target_agent]
     food = float(household.stored_resources.get("grain", 0)) + float(household.stored_resources.get("fish", 0))
     return min(0.14, max(0.0, 18 - food) / 100)
+
+
+def _target_role_factor(
+    action: str,
+    target_agent: str,
+    role_signals_by_agent: dict[str, list[RoleSignal]] | None,
+) -> dict[str, Any]:
+    if not role_signals_by_agent:
+        return {"score": 0.0, "role_names": []}
+    score = 0.0
+    applied = []
+    for role in role_signals_by_agent.get(target_agent, []):
+        if role.role_name == "trusted_neighbor" and action in {"cooperate", "share_food"}:
+            score += min(0.06, role.score * 0.06)
+            applied.append(role.role_name)
+        elif role.role_name == "helper" and action == "cooperate":
+            score += min(0.025, role.score * 0.025)
+            applied.append(role.role_name)
+        elif role.role_name == "conflict_prone" and action in {"avoid_conflict", "conflict_over_food"}:
+            score += min(0.035, role.score * 0.04)
+            applied.append(role.role_name)
+    return {"score": round(score, 4), "role_names": applied[:3]}
 
 
 def _hostility(relationship: Relationship) -> float:

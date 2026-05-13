@@ -6,8 +6,9 @@ from typing import Any
 
 from threaded_earth.goals import goal_adjustments, summarize_goal_influence
 from threaded_earth.memory import RetrievedMemory, memory_adjustments, summarize_memory_influence
-from threaded_earth.models import Agent, Goal, Household, Relationship
+from threaded_earth.models import Agent, Goal, Household, Relationship, RoleSignal
 from threaded_earth.resources import household_food, household_materials
+from threaded_earth.roles import role_adjustments, summarize_role_influence
 from threaded_earth.targeting import TargetSelection, evaluate_target_aware_actions
 
 
@@ -37,6 +38,8 @@ class DecisionTrace:
     best_target_by_action: dict[str, Any]
     target_aware_score_reasons: list[str]
     final_score_breakdown: dict[str, Any]
+    role_influence_summary: str
+    role_score_adjustments: dict[str, float]
 
 
 def choose_action(
@@ -48,9 +51,12 @@ def choose_action(
     retrieved_memories: list[RetrievedMemory] | None = None,
     active_goals: list[Goal] | None = None,
     households_by_agent: dict[str, Household] | None = None,
+    active_roles: list[RoleSignal] | None = None,
+    role_signals_by_agent: dict[str, list[RoleSignal]] | None = None,
 ) -> DecisionTrace:
     retrieved_memories = retrieved_memories or []
     active_goals = active_goals or []
+    active_roles = active_roles or []
     needs = dict(agent.needs)
     food_stores = household_food(household)
     material_stores = household_materials(household)
@@ -76,6 +82,7 @@ def choose_action(
 
     adjustments = memory_adjustments(retrieved_memories, avg_trust)
     goal_scores = goal_adjustments(active_goals)
+    role_scores = role_adjustments(active_roles)
     target_evaluation = evaluate_target_aware_actions(
         [candidate["action"] for candidate in candidates],
         agent,
@@ -83,11 +90,13 @@ def choose_action(
         retrieved_memories,
         active_goals,
         households_by_agent,
+        role_signals_by_agent,
     )
     for candidate in candidates:
         candidate["base_score"] = round(candidate["score"], 3)
         candidate["memory_adjustment"] = adjustments.get(candidate["action"], 0.0)
         candidate["goal_adjustment"] = goal_scores.get(candidate["action"], 0.0)
+        candidate["role_adjustment"] = role_scores.get(candidate["action"], 0.0)
         candidate["target_aware_adjustment"] = target_evaluation.target_aware_action_scores.get(candidate["action"], 0.0)
         candidate["best_target"] = target_evaluation.best_target_by_action.get(candidate["action"])
         if candidate["action"] in target_evaluation.selections_by_action:
@@ -100,6 +109,7 @@ def choose_action(
                 candidate["score"]
                 + candidate["memory_adjustment"]
                 + candidate["goal_adjustment"]
+                + candidate["role_adjustment"]
                 + candidate["target_aware_adjustment"],
             ),
             3,
@@ -136,6 +146,9 @@ def choose_action(
     if active_goals:
         reasons.append(f"active_goal_ids={[goal.goal_id for goal in active_goals]}")
         reasons.append(f"goal_score_adjustments={goal_scores}")
+    if active_roles:
+        reasons.append(f"active_role_signals={[role.role_signal_id for role in active_roles]}")
+        reasons.append(f"role_score_adjustments={role_scores}")
     if target_selection.selected_target_agent_id:
         reasons.append(f"selected_target_agent_id={target_selection.selected_target_agent_id}")
         reasons.append(f"target_selection_scores={target_selection.target_selection_scores}")
@@ -147,6 +160,7 @@ def choose_action(
             "base_score": candidate["base_score"],
             "memory_adjustment": candidate["memory_adjustment"],
             "goal_adjustment": candidate["goal_adjustment"],
+            "role_adjustment": candidate["role_adjustment"],
             "target_aware_adjustment": candidate["target_aware_adjustment"],
             "final_score": candidate["score"],
         }
@@ -181,6 +195,8 @@ def choose_action(
         best_target_by_action=target_evaluation.best_target_by_action,
         target_aware_score_reasons=target_evaluation.target_aware_score_reasons,
         final_score_breakdown=final_breakdown,
+        role_influence_summary=summarize_role_influence(active_roles, role_scores),
+        role_score_adjustments=role_scores,
     )
 
 

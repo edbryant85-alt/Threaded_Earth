@@ -6,10 +6,11 @@ from sqlalchemy.orm import Session
 
 from threaded_earth.goals import goal_stats
 from threaded_earth.metrics import compute_metrics, write_metrics
-from threaded_earth.models import Decision, Event, Goal, Memory, Resource, Run
+from threaded_earth.models import Decision, Event, Goal, Memory, Resource, RoleSignal, Run
 from threaded_earth.paths import report_path
-from threaded_earth.propagation import propagation_stats
+from threaded_earth.propagation import propagation_pressure_rows, propagation_stats
 from threaded_earth.resources import household_resource_summary
+from threaded_earth.roles import role_stats
 from threaded_earth.snapshots import DELTA_METRICS, metric_delta_rows
 from threaded_earth.targeting import SOCIAL_ACTIONS, target_aware_stats, target_stats
 
@@ -41,6 +42,8 @@ def generate_report(session: Session, run_id: str) -> Path:
     target_lines = _targeted_social_lines(session, run_id)
     household_resource_lines = _household_resource_lines(session, run_id)
     propagation_lines = _social_propagation_lines(session, run_id)
+    propagation_pressure_lines = _propagation_pressure_lines(session, run_id)
+    role_lines = _role_stabilization_lines(session, run_id)
 
     path = report_path(run_id)
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -75,6 +78,12 @@ def generate_report(session: Session, run_id: str) -> Path:
                 "",
                 "## Social Propagation",
                 *propagation_lines,
+                "",
+                "## Propagation Pressure",
+                *propagation_pressure_lines,
+                "",
+                "## Role Stabilization",
+                *role_lines,
                 "",
                 "## Major Events",
                 *(event_lines or ["- No major events recorded."]),
@@ -306,7 +315,68 @@ def _social_propagation_lines(session: Session, run_id: str) -> list[str]:
     return [
         f"- events propagated: {stats['propagated_event_count']}",
         f"- propagated memories: {stats['propagated_memory_count']}",
+        f"- propagation skipped: {stats['propagation_skipped_count']}",
         f"- most common propagation reasons: {reasons}",
         f"- most socially visible agents: {visible}",
         *(examples or ["- examples: no social propagation events recorded."]),
+    ]
+
+
+def _propagation_pressure_lines(session: Session, run_id: str) -> list[str]:
+    rows = propagation_pressure_rows(session, run_id)
+    if not rows:
+        return ["- no propagation pressure rows available."]
+    total_skipped = sum(row["propagation_skipped_this_tick"] for row in rows)
+    cap_ticks = [row["tick"] for row in rows if row["cap_reached"]]
+    examples = [
+        f"- tick {row['tick']}: events={row['propagation_events_this_tick']} "
+        f"memories={row['propagation_memories_this_tick']} skipped={row['propagation_skipped_this_tick']} "
+        f"cap_reached={row['cap_reached']}"
+        for row in rows[:10]
+    ]
+    return [
+        f"- total skipped propagation attempts: {total_skipped}",
+        f"- ticks where cap reached: {', '.join(str(tick) for tick in cap_ticks) or 'none'}",
+        *examples,
+    ]
+
+
+def _role_stabilization_lines(session: Session, run_id: str) -> list[str]:
+    stats = role_stats(session, run_id)
+    counts = ", ".join(
+        f"{role_name}={count}" for role_name, count in stats["role_counts_above_threshold"].items()
+    ) or "none"
+    top_roles = [
+        f"- top role {item['agent_id']}: {item['role_name']} score={item['score']} "
+        f"evidence={item['evidence_count']} updated_tick={item['updated_tick']}"
+        for item in stats["top_role_signals"][:6]
+    ]
+    influenced = (
+        session.query(Decision)
+        .filter(Decision.run_id == run_id)
+        .order_by(Decision.tick, Decision.agent_id)
+        .all()
+    )
+    influenced = [decision for decision in influenced if decision.role_score_adjustments]
+    examples = [
+        f"- decision tick {decision.tick} {decision.agent_id}: {decision.selected_action.get('action')}; "
+        f"{decision.role_influence_summary}"
+        for decision in influenced[:5]
+    ]
+    recent_roles = (
+        session.query(RoleSignal)
+        .filter(RoleSignal.run_id == run_id)
+        .order_by(RoleSignal.updated_tick.desc(), RoleSignal.score.desc(), RoleSignal.role_name)
+        .limit(5)
+        .all()
+    )
+    shifts = [
+        f"- recent shift {role.agent_id}: {role.role_name} score={role.score:.2f}; {role.evidence_summary}"
+        for role in recent_roles
+    ]
+    return [
+        f"- role counts above threshold: {counts}",
+        *(top_roles or ["- top role signals: none recorded."]),
+        *(shifts or ["- notable role shifts: none recorded."]),
+        *(examples or ["- example decisions influenced by roles: none recorded."]),
     ]

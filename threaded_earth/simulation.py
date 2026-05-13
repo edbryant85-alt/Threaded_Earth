@@ -16,6 +16,13 @@ from threaded_earth.models import Agent, Decision, Household, Memory, Relationsh
 from threaded_earth.paths import ensure_artifact_dirs
 from threaded_earth.propagation import propagate_social_event
 from threaded_earth.resources import add_household_resource, consume_household_food, household_food, transfer_household_resource
+from threaded_earth.roles import (
+    get_active_role_signals,
+    initialize_role_biases,
+    record_action_role_evidence,
+    role_signals_by_agent,
+    update_tick_role_signals,
+)
 from threaded_earth.snapshots import write_snapshot
 
 
@@ -28,6 +35,8 @@ def initialize_run(session: Session, run_id: str, seed: int, config: ThreadedEar
     ensure_artifact_dirs(run_id)
     session.add(Run(run_id=run_id, seed=seed, config=config.as_dict(), status="initialized"))
     create_initial_state(session, run_id, seed, config)
+    agents = session.query(Agent).filter(Agent.run_id == run_id).order_by(Agent.neutral_id).all()
+    initialize_role_biases(session, run_id, agents)
     record_event(
         session,
         run_id,
@@ -67,6 +76,7 @@ def _simulate_tick(session: Session, run_id: str, tick: int, rng: random.Random,
     households = {household.household_id: household for household in session.query(Household).filter(Household.run_id == run_id)}
     households_by_agent = {agent.neutral_id: households[agent.household_id] for agent in agents}
     _apply_household_upkeep(session, run_id, tick, households, agents, agents_by_id, households_by_agent, config)
+    roles_by_agent = role_signals_by_agent(session, run_id)
     for agent in agents:
         household = households[agent.household_id]
         relationships = (
@@ -76,10 +86,23 @@ def _simulate_tick(session: Session, run_id: str, tick: int, rng: random.Random,
         )
         retrieved_memories = retrieve_relevant_memories(session, run_id, agent.neutral_id, tick, relationships)
         active_goals = update_agent_goals(session, run_id, agent, household, relationships, retrieved_memories, tick)
-        trace = choose_action(agent, household, relationships, rng, tick, retrieved_memories, active_goals, households_by_agent)
+        active_roles = roles_by_agent.get(agent.neutral_id) or get_active_role_signals(session, run_id, agent.neutral_id)
+        trace = choose_action(
+            agent,
+            household,
+            relationships,
+            rng,
+            tick,
+            retrieved_memories,
+            active_goals,
+            households_by_agent,
+            active_roles,
+            roles_by_agent,
+        )
         _record_decision(session, run_id, agent, tick, trace)
         _apply_action(session, run_id, tick, rng, agent, household, relationships, trace, agents_by_id, households_by_agent, config)
         _decay_needs(agent)
+    update_tick_role_signals(session, run_id, agents, tick)
 
 
 def _record_decision(session: Session, run_id: str, agent: Agent, tick: int, trace: DecisionTrace) -> None:
@@ -100,6 +123,8 @@ def _record_decision(session: Session, run_id: str, agent: Agent, tick: int, tra
                 f"active_goal_ids={trace.active_goal_ids}",
                 f"goal_influence_summary={trace.goal_influence_summary}",
                 f"goal_score_adjustments={trace.goal_score_adjustments}",
+                f"role_influence_summary={trace.role_influence_summary}",
+                f"role_score_adjustments={trace.role_score_adjustments}",
                 f"selected_target_agent_id={trace.selected_target_agent_id}",
                 f"target_selection_reasons={trace.target_selection_reasons}",
                 f"target_aware_action_scores={trace.target_aware_action_scores}",
@@ -121,6 +146,8 @@ def _record_decision(session: Session, run_id: str, agent: Agent, tick: int, tra
             best_target_by_action=trace.best_target_by_action,
             target_aware_score_reasons=trace.target_aware_score_reasons,
             final_score_breakdown=trace.final_score_breakdown,
+            role_influence_summary=trace.role_influence_summary,
+            role_score_adjustments=trace.role_score_adjustments,
             confidence=trace.confidence,
             uncertainty_notes=trace.uncertainty_notes,
         )
@@ -224,6 +251,7 @@ def _apply_action(
             f"{agent.display_name} gathered {resource_type} for {household.household_name}.",
         )
         _remember(session, run_id, tick, agent.neutral_id, event.event_id, 0.45, event.summary)
+        record_action_role_evidence(session, run_id, agent, tick, action, event)
     elif action == "cooperate":
         target_household = _target_household(households_by_agent, trace.selected_target_agent_id)
         transfer = None
@@ -256,6 +284,7 @@ def _apply_action(
         )
         _remember(session, run_id, tick, agent.neutral_id, event.event_id, 0.58, event.summary)
         _remember_target(session, run_id, tick, trace.selected_target_agent_id, event.event_id, 0.56, event.summary)
+        record_action_role_evidence(session, run_id, agent, tick, action, event)
         propagate_social_event(session, run_id, tick, event, agents_by_id, households_by_agent, config.simulation.propagation)
     elif action == "share_food":
         target_household = _target_household(households_by_agent, trace.selected_target_agent_id)
@@ -290,6 +319,7 @@ def _apply_action(
         )
         _remember(session, run_id, tick, agent.neutral_id, event.event_id, 0.64, event.summary)
         _remember_target(session, run_id, tick, trace.selected_target_agent_id, event.event_id, 0.62, event.summary)
+        record_action_role_evidence(session, run_id, agent, tick, action, event)
         propagate_social_event(session, run_id, tick, event, agents_by_id, households_by_agent, config.simulation.propagation)
     elif action == "repair_relationship":
         if target_rel is not None:
@@ -309,6 +339,7 @@ def _apply_action(
         )
         _remember(session, run_id, tick, agent.neutral_id, event.event_id, 0.66, event.summary)
         _remember_target(session, run_id, tick, trace.selected_target_agent_id, event.event_id, 0.62, event.summary)
+        record_action_role_evidence(session, run_id, agent, tick, action, event)
         propagate_social_event(session, run_id, tick, event, agents_by_id, households_by_agent, config.simulation.propagation)
     elif action == "avoid_conflict":
         agent.needs["belonging"] = max(0, agent.needs["belonging"] - 2)
@@ -324,6 +355,7 @@ def _apply_action(
         )
         _remember(session, run_id, tick, agent.neutral_id, event.event_id, 0.57, event.summary)
         _remember_target(session, run_id, tick, trace.selected_target_agent_id, event.event_id, 0.55, event.summary)
+        record_action_role_evidence(session, run_id, agent, tick, action, event)
     elif action == "conflict_over_food":
         target_household = _target_household(households_by_agent, trace.selected_target_agent_id)
         transfer = None
@@ -358,6 +390,7 @@ def _apply_action(
         )
         _remember(session, run_id, tick, agent.neutral_id, event.event_id, 0.78, event.summary)
         _remember_target(session, run_id, tick, trace.selected_target_agent_id, event.event_id, 0.74, event.summary)
+        record_action_role_evidence(session, run_id, agent, tick, action, event)
         propagate_social_event(session, run_id, tick, event, agents_by_id, households_by_agent, config.simulation.propagation)
     else:
         agent.needs["rest"] = min(100, agent.needs["rest"] + 14)

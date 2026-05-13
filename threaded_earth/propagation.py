@@ -32,10 +32,23 @@ def propagate_social_event(
 ) -> list[Event]:
     if not config.propagation_enabled or source_event.event_type not in ELIGIBLE_PROPAGATION_EVENTS:
         return []
+    source_importance = _base_salience(source_event.event_type)
+    if source_importance < config.propagation_min_source_event_importance:
+        _record_skipped(session, run_id, tick, source_event, 0, "below_source_importance")
+        return []
 
     candidates = _select_observers(session, run_id, source_event, agents_by_id, households_by_agent, config)
     emitted: list[Event] = []
     for candidate in candidates[: config.propagation_max_observers]:
+        if config.propagation_cooldown_per_observer_subject_pair and _cooldown_applies(
+            session, run_id, tick, candidate.observer_agent_id, candidate.subject_agent_id
+        ):
+            _record_skipped(session, run_id, tick, source_event, 1, "observer_subject_cooldown")
+            continue
+        if _propagation_event_count(session, run_id, tick) >= config.propagation_max_events_per_tick:
+            _record_skipped(session, run_id, tick, source_event, 1, "event_cap_reached")
+            continue
+        memory_cap_reached = _propagated_memory_count(session, run_id, tick) >= config.propagation_max_memories_per_tick
         relationship_delta = _apply_observer_effect(
             session,
             run_id,
@@ -45,7 +58,7 @@ def propagate_social_event(
             config.propagation_strength,
         )
         memory_id = None
-        if config.propagation_create_memories:
+        if config.propagation_create_memories and not memory_cap_reached:
             memory_id = _create_propagated_memory(
                 session,
                 run_id,
@@ -55,6 +68,8 @@ def propagate_social_event(
                 config.propagation_memory_salience_multiplier,
                 candidate.reason,
             )
+        elif config.propagation_create_memories and memory_cap_reached:
+            _record_skipped(session, run_id, tick, source_event, 1, "memory_cap_reached")
         payload = {
             "source_event_id": source_event.event_id,
             "observer_agent_id": candidate.observer_agent_id,
@@ -87,6 +102,7 @@ def propagate_social_event(
 def propagation_stats(session: Session, run_id: str) -> dict[str, Any]:
     events = _propagation_events(session, run_id)
     memories = _propagated_memories(session, run_id)
+    skipped_events = _skipped_events(session, run_id)
     reason_counts: dict[str, int] = {}
     subject_counts: dict[str, int] = {}
     for event in events:
@@ -98,6 +114,7 @@ def propagation_stats(session: Session, run_id: str) -> dict[str, Any]:
     return {
         "propagated_event_count": len(events),
         "propagated_memory_count": len(memories),
+        "propagation_skipped_count": sum(int(event.payload.get("skipped_count", 0)) for event in skipped_events),
         "common_propagation_reasons": _top_counts(reason_counts),
         "most_socially_visible_agents": _top_counts(subject_counts),
     }
@@ -107,6 +124,12 @@ def propagation_stats_for_tick(session: Session, run_id: str, tick: int) -> dict
     events = (
         session.query(Event)
         .filter(Event.run_id == run_id, Event.tick == tick, Event.event_type == "social_propagation")
+        .order_by(Event.event_id)
+        .all()
+    )
+    skipped_events = (
+        session.query(Event)
+        .filter(Event.run_id == run_id, Event.tick == tick, Event.event_type == "propagation_skipped")
         .order_by(Event.event_id)
         .all()
     )
@@ -122,6 +145,10 @@ def propagation_stats_for_tick(session: Session, run_id: str, tick: int) -> dict
     return {
         "propagated_events_this_tick": len(events),
         "propagated_memories_this_tick": memories,
+        "propagation_events_this_tick": len(events),
+        "propagation_memories_this_tick": memories,
+        "propagation_skipped_this_tick": sum(int(event.payload.get("skipped_count", 0)) for event in skipped_events),
+        "cap_reached": any(event.payload.get("skip_reason") in {"event_cap_reached", "memory_cap_reached"} for event in skipped_events),
         "observers_reached_this_tick": len(observers),
         "top_subjects_by_propagation": _top_counts(subjects),
     }
@@ -135,6 +162,18 @@ def recent_propagation_events(session: Session, run_id: str, limit: int = 8) -> 
         .limit(limit)
         .all()
     )
+
+
+def propagation_pressure_rows(session: Session, run_id: str) -> list[dict[str, Any]]:
+    ticks = [
+        tick
+        for (tick,) in session.query(Event.tick)
+        .filter(Event.run_id == run_id, Event.tick > 0)
+        .distinct()
+        .order_by(Event.tick)
+        .all()
+    ]
+    return [{"tick": tick, **propagation_stats_for_tick(session, run_id, tick)} for tick in ticks]
 
 
 def _select_observers(
@@ -318,6 +357,73 @@ def _create_propagated_memory(
     return memory_id
 
 
+def _record_skipped(
+    session: Session,
+    run_id: str,
+    tick: int,
+    source_event: Event,
+    skipped_count: int,
+    reason: str,
+) -> None:
+    if skipped_count <= 0 and reason != "below_source_importance":
+        return
+    record_event(
+        session,
+        run_id,
+        tick,
+        "propagation_skipped",
+        source_event.actor,
+        source_event.target,
+        {
+            "source_event_id": source_event.event_id,
+            "source_event_type": source_event.event_type,
+            "skipped_count": skipped_count,
+            "skip_reason": reason,
+            "source_importance": _base_salience(source_event.event_type),
+        },
+        f"Propagation skipped for {source_event.event_type}: {reason}.",
+    )
+
+
+def _propagation_event_count(session: Session, run_id: str, tick: int) -> int:
+    return (
+        session.query(Event)
+        .filter(Event.run_id == run_id, Event.tick == tick, Event.event_type == "social_propagation")
+        .count()
+    )
+
+
+def _propagated_memory_count(session: Session, run_id: str, tick: int) -> int:
+    return (
+        session.query(Memory)
+        .filter(Memory.run_id == run_id, Memory.created_tick == tick, Memory.summary.like("Indirect social memory%"))
+        .count()
+    )
+
+
+def _cooldown_applies(
+    session: Session,
+    run_id: str,
+    tick: int,
+    observer_agent_id: str,
+    subject_agent_id: str | None,
+) -> bool:
+    if subject_agent_id is None:
+        return False
+    existing = (
+        session.query(Event)
+        .filter(Event.run_id == run_id, Event.tick == tick, Event.event_type == "social_propagation")
+        .all()
+    )
+    for event in existing:
+        if (
+            event.payload.get("observer_agent_id") == observer_agent_id
+            and event.payload.get("subject_agent_id") == subject_agent_id
+        ):
+            return True
+    return False
+
+
 def _base_salience(event_type: str) -> float:
     return {
         "cooperation": 0.58,
@@ -342,6 +448,15 @@ def _propagated_memories(session: Session, run_id: str) -> list[Memory]:
         session.query(Memory)
         .filter(Memory.run_id == run_id, Memory.summary.like("Indirect social memory%"))
         .order_by(Memory.created_tick, Memory.memory_id)
+        .all()
+    )
+
+
+def _skipped_events(session: Session, run_id: str) -> list[Event]:
+    return (
+        session.query(Event)
+        .filter(Event.run_id == run_id, Event.event_type == "propagation_skipped")
+        .order_by(Event.tick, Event.event_id)
         .all()
     )
 

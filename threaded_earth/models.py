@@ -92,6 +92,20 @@ class Goal(Base):
     notes: Mapped[str] = mapped_column(Text, default="")
 
 
+class RoleSignal(Base):
+    __tablename__ = "role_signals"
+
+    role_signal_id: Mapped[str] = mapped_column(String, primary_key=True)
+    run_id: Mapped[str] = mapped_column(ForeignKey("runs.run_id"), index=True)
+    agent_id: Mapped[str] = mapped_column(String, index=True)
+    role_name: Mapped[str] = mapped_column(String, index=True)
+    score: Mapped[float] = mapped_column(Float, nullable=False)
+    evidence_count: Mapped[int] = mapped_column(Integer, default=0)
+    created_tick: Mapped[int] = mapped_column(Integer, nullable=False)
+    updated_tick: Mapped[int] = mapped_column(Integer, nullable=False)
+    evidence_summary: Mapped[str] = mapped_column(Text, default="")
+
+
 class Resource(Base):
     __tablename__ = "resources"
 
@@ -151,5 +165,7 @@ class Decision(Base):
     best_target_by_action: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
     target_aware_score_reasons: Mapped[list[str]] = mapped_column(JSON, default=list)
     final_score_breakdown: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    role_influence_summary: Mapped[str] = mapped_column(Text, default="No role signals applied.")
+    role_score_adjustments: Mapped[dict[str, float]] = mapped_column(JSON, default=dict)
     confidence: Mapped[float] = mapped_column(Float, nullable=False)
     uncertainty_notes: Mapped[str] = mapped_column(Text, nullable=False)
