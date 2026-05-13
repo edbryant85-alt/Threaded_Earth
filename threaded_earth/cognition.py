@@ -7,6 +7,7 @@ from typing import Any
 from threaded_earth.goals import goal_adjustments, summarize_goal_influence
 from threaded_earth.memory import RetrievedMemory, memory_adjustments, summarize_memory_influence
 from threaded_earth.models import Agent, Goal, Household, Relationship
+from threaded_earth.resources import household_food, household_materials
 from threaded_earth.targeting import select_target_for_action
 
 
@@ -47,7 +48,8 @@ def choose_action(
     retrieved_memories = retrieved_memories or []
     active_goals = active_goals or []
     needs = dict(agent.needs)
-    food_stores = float(household.stored_resources.get("grain", 0)) + float(household.stored_resources.get("fish", 0))
+    food_stores = household_food(household)
+    material_stores = household_materials(household)
     avg_trust = sum(rel.trust for rel in relationships) / len(relationships) if relationships else 0.35
     avg_affinity = sum(rel.affinity for rel in relationships) / len(relationships) if relationships else 0.35
     pressure = max(0.0, (35 - needs["food"]) / 35) + max(0.0, (18 - food_stores) / 18)
@@ -56,7 +58,7 @@ def choose_action(
         _candidate("seek_food", 0.28 + pressure, "raises household food stores"),
         _candidate("cooperate", 0.22 + avg_trust * 0.45 + needs["belonging"] / 180, "strengthens a nearby tie"),
         _candidate("rest", 0.2 + max(0, 30 - needs["rest"]) / 80, "restores personal energy"),
-        _candidate("share_food", 0.15 + avg_affinity * 0.35 if food_stores > 14 else 0.05, "transfers food to a strained household"),
+        _candidate("share_food", _share_score(food_stores, avg_affinity, avg_trust), "transfers food to a strained household"),
         _candidate("repair_relationship", 0.08 + max(0, 0.5 - avg_trust) * 0.18, "repairs a strained social tie"),
         _candidate("avoid_conflict", 0.06 + max(0, 0.48 - avg_trust) * 0.2, "keeps distance from a risky tie"),
         _candidate("conflict_over_food", 0.05 + pressure * 0.28 + max(0, 0.45 - avg_trust) * 0.3, "contests scarce food"),
@@ -105,6 +107,7 @@ def choose_action(
         f"rest_need={needs['rest']}",
         f"belonging_need={needs['belonging']}",
         f"household_food={food_stores:.1f}",
+        f"household_materials={material_stores:.1f}",
         f"avg_trust={avg_trust:.2f}",
         f"tick={tick}",
     ]
@@ -147,3 +150,12 @@ def choose_action(
 
 def _candidate(action: str, score: float, rationale: str) -> dict[str, Any]:
     return {"action": action, "score": round(score, 3), "rationale": rationale}
+
+
+def _share_score(food_stores: float, avg_affinity: float, avg_trust: float) -> float:
+    if food_stores < 10:
+        return 0.025 + avg_trust * 0.04
+    if food_stores < 16:
+        return 0.06 + avg_trust * 0.08
+    abundance_bonus = min(0.12, max(0.0, food_stores - 24) / 100)
+    return 0.14 + avg_affinity * 0.28 + avg_trust * 0.08 + abundance_bonus

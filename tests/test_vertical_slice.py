@@ -6,7 +6,7 @@ from threaded_earth.cli import app
 from threaded_earth.config import load_config
 from threaded_earth.db import session_factory
 from threaded_earth.events import event_log_path
-from threaded_earth.models import Agent, Decision, Event, Household, Memory, Relationship, Run
+from threaded_earth.models import Agent, Decision, Event, Household, Memory, Relationship, Resource, Run
 from threaded_earth.paths import report_path, snapshot_path
 from threaded_earth.reports import generate_report
 from threaded_earth.simulation import initialize_run, run_simulation
@@ -125,3 +125,26 @@ def test_social_decisions_events_memories_and_relationships_use_selected_targets
             .first()
         )
         assert relationship is not None
+
+
+def test_resource_events_and_household_state_are_consistent(tmp_path, monkeypatch):
+    monkeypatch.setattr("threaded_earth.paths.ARTIFACTS_DIR", tmp_path)
+    config = load_config()
+    SessionLocal = session_factory(tmp_path / "test.sqlite")
+    with SessionLocal() as session:
+        initialize_run(session, "run-test", 47, config)
+        run_simulation(session, "run-test", 4, 47, config)
+
+        resource_events = [
+            event
+            for event in session.query(Event).filter(Event.run_id == "run-test").all()
+            if event.payload.get("resource_transfer") or event.event_type == "resource_change"
+        ]
+        assert resource_events
+        assert any(event.payload.get("resource_transfer") for event in resource_events)
+
+        for resource in session.query(Resource).filter(Resource.run_id == "run-test").all():
+            household = session.get(Household, resource.owner_id)
+            assert household is not None
+            assert household.stored_resources[resource.resource_type] == resource.quantity
+            assert resource.quantity >= 0

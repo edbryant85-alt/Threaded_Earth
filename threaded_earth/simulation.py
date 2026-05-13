@@ -12,8 +12,9 @@ from threaded_earth.generation import create_initial_state
 from threaded_earth.goals import update_agent_goals
 from threaded_earth.memory import retrieve_relevant_memories
 from threaded_earth.metrics import write_metrics
-from threaded_earth.models import Agent, Decision, Household, Memory, Relationship, Resource, Run
+from threaded_earth.models import Agent, Decision, Household, Memory, Relationship, Run
 from threaded_earth.paths import ensure_artifact_dirs
+from threaded_earth.resources import add_household_resource, household_food, transfer_household_resource
 from threaded_earth.snapshots import write_snapshot
 
 
@@ -75,7 +76,7 @@ def _simulate_tick(session: Session, run_id: str, tick: int, rng: random.Random)
         active_goals = update_agent_goals(session, run_id, agent, household, relationships, retrieved_memories, tick)
         trace = choose_action(agent, household, relationships, rng, tick, retrieved_memories, active_goals, households_by_agent)
         _record_decision(session, run_id, agent, tick, trace)
-        _apply_action(session, run_id, tick, rng, agent, household, relationships, trace, agents_by_id)
+        _apply_action(session, run_id, tick, rng, agent, household, relationships, trace, agents_by_id, households_by_agent)
         _decay_needs(agent)
 
 
@@ -128,13 +129,14 @@ def _apply_action(
     relationships: list[Relationship],
     trace: DecisionTrace,
     agents_by_id: dict[str, Agent],
+    households_by_agent: dict[str, Household],
 ) -> None:
     action = trace.selected_action["action"]
     target_rel = _relationship_for_target(relationships, trace.selected_target_agent_id)
     target_name = _target_name(agents_by_id, trace.selected_target_agent_id)
     if action == "seek_food":
-        amount = _food_yield(agent.archetype, rng)
-        _add_resource(session, run_id, household.household_id, "grain" if agent.archetype != "fisher" else "fish", amount)
+        resource_type, amount = _resource_yield(agent.archetype, rng)
+        actual_delta = add_household_resource(session, run_id, household.household_id, resource_type, amount)
         agent.needs["food"] = min(100, agent.needs["food"] + 8)
         event = record_event(
             session,
@@ -143,11 +145,33 @@ def _apply_action(
             "resource_change",
             agent.neutral_id,
             household.household_id,
-            {"resource_delta": amount, "action": action, "active_needs": trace.active_needs},
-            f"{agent.display_name} gathered food for {household.household_name}.",
+            {
+                "resource_delta": actual_delta,
+                "resource": resource_type,
+                "resource_transfer": None,
+                "action": action,
+                "active_needs": trace.active_needs,
+                "household_food_after": household_food(household),
+            },
+            f"{agent.display_name} gathered {resource_type} for {household.household_name}.",
         )
         _remember(session, run_id, tick, agent.neutral_id, event.event_id, 0.45, event.summary)
     elif action == "cooperate":
+        target_household = _target_household(households_by_agent, trace.selected_target_agent_id)
+        transfer = None
+        if target_household is not None:
+            helped_resource = "reeds" if agent.archetype in {"builder", "craft worker"} else "grain"
+            helped_amount = 0.7 if helped_resource == "grain" else 0.45
+            actual_delta = add_household_resource(session, run_id, target_household.household_id, helped_resource, helped_amount)
+            transfer = {
+                "resource_type": helped_resource,
+                "requested_quantity": helped_amount,
+                "transferred_quantity": actual_delta,
+                "source_household_id": None,
+                "target_household_id": target_household.household_id,
+                "status": "created_by_cooperation",
+                "reason": "cooperative work increased target household stores",
+            }
         if target_rel is not None:
             target_rel.trust = min(1.0, target_rel.trust + 0.04)
             target_rel.affinity = min(1.0, target_rel.affinity + 0.03)
@@ -159,16 +183,28 @@ def _apply_action(
             "cooperation",
             agent.neutral_id,
             trace.selected_target_agent_id,
-            _social_payload(trace, {"trust": 0.04, "affinity": 0.03}),
-            f"{agent.display_name} cooperated with {target_name} on shared settlement work.",
+            _social_payload(trace, {"trust": 0.04, "affinity": 0.03}, {"resource_transfer": transfer}),
+            f"{agent.display_name} cooperated with {target_name} and improved household stores.",
         )
         _remember(session, run_id, tick, agent.neutral_id, event.event_id, 0.58, event.summary)
         _remember_target(session, run_id, tick, trace.selected_target_agent_id, event.event_id, 0.56, event.summary)
     elif action == "share_food":
-        _add_resource(session, run_id, household.household_id, "grain", -1.0)
+        target_household = _target_household(households_by_agent, trace.selected_target_agent_id)
+        requested = 1.5 if household_food(household) >= 24 else 0.8
+        transfer = transfer_household_resource(
+            session,
+            run_id,
+            household.household_id,
+            target_household.household_id if target_household else None,
+            "grain",
+            requested,
+        )
         if target_rel is not None:
-            target_rel.reputation = min(1.0, target_rel.reputation + 0.05)
-            target_rel.trust = min(1.0, target_rel.trust + 0.03)
+            if transfer["transferred_quantity"] > 0:
+                target_rel.reputation = min(1.0, target_rel.reputation + 0.05)
+                target_rel.trust = min(1.0, target_rel.trust + 0.03)
+            else:
+                target_rel.trust = max(0.0, target_rel.trust - 0.01)
         event = record_event(
             session,
             run_id,
@@ -176,8 +212,12 @@ def _apply_action(
             "resource_exchange",
             agent.neutral_id,
             trace.selected_target_agent_id,
-            _social_payload(trace, {"trust": 0.03, "reputation": 0.05}, {"resource_delta": -1.0, "resource": "grain"}),
-            f"{agent.display_name} shared stored grain with {target_name}.",
+            _social_payload(
+                trace,
+                {"trust": 0.03, "reputation": 0.05} if transfer["transferred_quantity"] > 0 else {"trust": -0.01},
+                {"resource_transfer": transfer},
+            ),
+            _share_summary(agent.display_name, target_name, transfer),
         )
         _remember(session, run_id, tick, agent.neutral_id, event.event_id, 0.64, event.summary)
         _remember_target(session, run_id, tick, trace.selected_target_agent_id, event.event_id, 0.62, event.summary)
@@ -214,6 +254,22 @@ def _apply_action(
         _remember(session, run_id, tick, agent.neutral_id, event.event_id, 0.57, event.summary)
         _remember_target(session, run_id, tick, trace.selected_target_agent_id, event.event_id, 0.55, event.summary)
     elif action == "conflict_over_food":
+        target_household = _target_household(households_by_agent, trace.selected_target_agent_id)
+        transfer = None
+        if target_household is not None:
+            before = float(target_household.stored_resources.get("grain", 0.0))
+            damaged = abs(add_household_resource(session, run_id, target_household.household_id, "grain", -0.6))
+            transfer = {
+                "resource_type": "grain",
+                "requested_quantity": 0.6,
+                "transferred_quantity": damaged,
+                "source_household_id": target_household.household_id,
+                "target_household_id": None,
+                "status": "damaged" if damaged > 0 else "failed",
+                "reason": "conflict damaged or consumed target household stores",
+                "source_quantity_before": round(before, 2),
+                "source_quantity_after": round(float(target_household.stored_resources.get("grain", 0.0)), 2),
+            }
         if target_rel is not None:
             target_rel.trust = max(0.0, target_rel.trust - 0.06)
             target_rel.affinity = max(0.0, target_rel.affinity - 0.05)
@@ -226,8 +282,8 @@ def _apply_action(
             "conflict",
             agent.neutral_id,
             trace.selected_target_agent_id,
-            _social_payload(trace, {"trust": -0.06, "affinity": -0.05, "reputation": -0.03}),
-            f"{agent.display_name} disputed access to scarce food with {target_name}.",
+            _social_payload(trace, {"trust": -0.06, "affinity": -0.05, "reputation": -0.03}, {"resource_transfer": transfer}),
+            f"{agent.display_name} disputed access to scarce food with {target_name}, damaging household stores.",
         )
         _remember(session, run_id, tick, agent.neutral_id, event.event_id, 0.78, event.summary)
         _remember_target(session, run_id, tick, trace.selected_target_agent_id, event.event_id, 0.74, event.summary)
@@ -246,9 +302,13 @@ def _apply_action(
         _remember(session, run_id, tick, agent.neutral_id, event.event_id, 0.35, event.summary)
 
 
-def _food_yield(archetype: str, rng: random.Random) -> float:
-    base = {"cultivator": 2.4, "gatherer": 1.8, "fisher": 2.0, "hunter": 1.7}.get(archetype, 1.0)
-    return round(base + rng.uniform(0.0, 1.2), 2)
+def _resource_yield(archetype: str, rng: random.Random) -> tuple[str, float]:
+    if archetype == "fisher":
+        return "fish", round(2.0 + rng.uniform(0.0, 1.2), 2)
+    if archetype in {"builder", "craft worker"}:
+        return "reeds", round(1.0 + rng.uniform(0.0, 0.8), 2)
+    base = {"cultivator": 2.4, "gatherer": 1.8, "hunter": 1.7}.get(archetype, 1.0)
+    return "grain", round(base + rng.uniform(0.0, 1.2), 2)
 
 
 def _relationship_for_target(relationships: list[Relationship], target_agent_id: str | None) -> Relationship | None:
@@ -265,6 +325,12 @@ def _target_name(agents_by_id: dict[str, Agent], target_agent_id: str | None) ->
         return "no selected target"
     target = agents_by_id.get(target_agent_id)
     return target.display_name if target else target_agent_id
+
+
+def _target_household(households_by_agent: dict[str, Household], target_agent_id: str | None) -> Household | None:
+    if target_agent_id is None:
+        return None
+    return households_by_agent.get(target_agent_id)
 
 
 def _social_payload(
@@ -286,23 +352,11 @@ def _social_payload(
     return payload
 
 
-def _add_resource(session: Session, run_id: str, household_id: str, resource_type: str, amount: float) -> None:
-    resource = (
-        session.query(Resource)
-        .filter(
-            Resource.run_id == run_id,
-            Resource.owner_scope == "household",
-            Resource.owner_id == household_id,
-            Resource.resource_type == resource_type,
-        )
-        .one()
-    )
-    resource.quantity = max(0.0, round(resource.quantity + amount, 2))
-    household = session.get(Household, household_id)
-    if household is not None:
-        stored = dict(household.stored_resources)
-        stored[resource_type] = resource.quantity
-        household.stored_resources = stored
+def _share_summary(actor_name: str, target_name: str, transfer: dict[str, object]) -> str:
+    amount = transfer["transferred_quantity"]
+    if amount:
+        return f"{actor_name} shared {amount} {transfer['resource_type']} with {target_name}."
+    return f"{actor_name} tried to share {transfer['resource_type']} with {target_name}, but household stores were insufficient."
 
 
 def _decay_needs(agent: Agent) -> None:

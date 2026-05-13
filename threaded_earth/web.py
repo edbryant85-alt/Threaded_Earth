@@ -10,6 +10,7 @@ from threaded_earth.goals import goal_stats
 from threaded_earth.memory import memory_stats
 from threaded_earth.models import Agent, Decision, Event, Goal, Memory, Run
 from threaded_earth.paths import ARTIFACTS_DIR, db_path, metrics_path
+from threaded_earth.resources import household_resource_summary
 from threaded_earth.snapshots import DELTA_METRICS, metric_delta_rows, snapshot_inventory
 from threaded_earth.targeting import SOCIAL_ACTIONS, target_stats
 
@@ -41,6 +42,7 @@ def run_detail(run_id: str) -> str:
         memory_summary = memory_stats(session, run_id)
         goal_summary = goal_stats(session, run_id)
         target_summary = target_stats(session, run_id)
+        resource_summary = household_resource_summary(session, run_id)
         recent_goals = (
             session.query(Goal)
             .filter(Goal.run_id == run_id, Goal.status == "active")
@@ -64,6 +66,11 @@ def run_detail(run_id: str) -> str:
             decision
             for decision in sorted(influenced_decisions, key=lambda item: (item.tick, item.agent_id), reverse=True)
             if decision.selected_action.get("action") in SOCIAL_ACTIONS and decision.selected_target_agent_id
+        ][:10]
+        recent_resource_events = [
+            event
+            for event in events
+            if event.payload.get("resource_transfer") or event.event_type == "resource_change"
         ][:10]
         influenced_count = sum(1 for decision in influenced_decisions if decision.retrieved_memory_ids)
         goal_influenced_count = sum(1 for decision in influenced_decisions if decision.active_goal_ids)
@@ -97,6 +104,14 @@ def run_detail(run_id: str) -> str:
         f"<tr><td>{decision.tick}</td><td>{decision.agent_id}</td><td>{decision.selected_action.get('action')}</td><td>{decision.selected_target_agent_id}</td><td>{'; '.join(decision.target_selection_reasons[:3])}</td></tr>"
         for decision in recent_targeted
     )
+    household_resource_rows = "".join(
+        f"<tr><td>{household['household_id']}</td><td>{household['household_name']}</td><td>{household['food']}</td><td>{household['materials']}</td></tr>"
+        for household in resource_summary["households"]
+    )
+    resource_event_rows = "".join(
+        f"<tr><td>{event.tick}</td><td>{event.event_type}</td><td>{event.summary}</td></tr>"
+        for event in recent_resource_events
+    )
     latest_tick = inventory.latest_tick if inventory.latest_tick is not None else "none"
     expected_ticks = inventory.expected_ticks if inventory.expected_ticks is not None else "unknown"
     return _page(
@@ -120,6 +135,10 @@ def run_detail(run_id: str) -> str:
         <p>Targeted social decisions: <strong>{target_summary['targeted_social_decisions']}</strong> | Untargeted social decisions: <strong>{target_summary['untargeted_social_decisions']}</strong></p>
         <table><tr><th>Target Agent</th><th>Count</th></tr>{target_rows or '<tr><td colspan="2">No targeted social decisions.</td></tr>'}</table>
         <table><tr><th>Tick</th><th>Actor</th><th>Action</th><th>Target</th><th>Reasons</th></tr>{recent_target_rows or '<tr><td colspan="5">No recent targeted social actions.</td></tr>'}</table>
+        <h2>Household Resources</h2>
+        <p>Total food: <strong>{resource_summary['total_food']}</strong> | Total materials: <strong>{resource_summary['total_materials']}</strong> | Average food: <strong>{resource_summary['average_food_per_household']}</strong> | Scarce households: <strong>{resource_summary['households_below_scarcity_threshold']}</strong></p>
+        <table><tr><th>Household</th><th>Name</th><th>Food</th><th>Materials</th></tr>{household_resource_rows}</table>
+        <table><tr><th>Tick</th><th>Type</th><th>Resource Event</th></tr>{resource_event_rows or '<tr><td colspan="3">No recent resource events.</td></tr>'}</table>
         <h2>Recent Events</h2><table><tr><th>Tick</th><th>Type</th><th>Summary</th></tr>{event_rows}</table>
         <h2>Recent Decisions</h2><table><tr><th>Tick</th><th>Agent</th><th>Selected</th><th>Confidence</th></tr>{decision_rows}</table>
         """,

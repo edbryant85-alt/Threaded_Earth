@@ -8,6 +8,7 @@ from threaded_earth.goals import goal_stats
 from threaded_earth.metrics import compute_metrics, write_metrics
 from threaded_earth.models import Decision, Event, Goal, Memory, Resource, Run
 from threaded_earth.paths import report_path
+from threaded_earth.resources import household_resource_summary
 from threaded_earth.snapshots import DELTA_METRICS, metric_delta_rows
 from threaded_earth.targeting import SOCIAL_ACTIONS, target_stats
 
@@ -37,6 +38,7 @@ def generate_report(session: Session, run_id: str) -> Path:
     memory_lines = _memory_influence_lines(session, run_id)
     goal_lines = _goal_dynamics_lines(session, run_id)
     target_lines = _targeted_social_lines(session, run_id)
+    household_resource_lines = _household_resource_lines(session, run_id)
 
     path = report_path(run_id)
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -65,6 +67,9 @@ def generate_report(session: Session, run_id: str) -> Path:
                 "",
                 "## Targeted Social Actions",
                 *target_lines,
+                "",
+                "## Household Resources",
+                *household_resource_lines,
                 "",
                 "## Major Events",
                 *(event_lines or ["- No major events recorded."]),
@@ -193,4 +198,54 @@ def _targeted_social_lines(session: Session, run_id: str) -> list[str]:
         f"- most-targeted agents: {most_targeted}",
         *(examples or ["- examples: no targeted social decisions recorded."]),
         *([f"- warning: {len(untargeted)} social decisions had no target."] if untargeted else []),
+    ]
+
+
+def _household_resource_lines(session: Session, run_id: str) -> list[str]:
+    summary = household_resource_summary(session, run_id)
+    transfer_events = [
+        event
+        for event in session.query(Event).filter(Event.run_id == run_id).order_by(Event.tick, Event.event_id).all()
+        if event.payload.get("resource_transfer")
+    ]
+    notable_transfers = []
+    for event in transfer_events[:8]:
+        transfer = event.payload.get("resource_transfer") or {}
+        notable_transfers.append(
+            f"- tick {event.tick} {event.event_type}: {transfer.get('status')} "
+            f"{transfer.get('transferred_quantity')} {transfer.get('resource_type')} "
+            f"from {transfer.get('source_household_id')} to {transfer.get('target_household_id')}"
+        )
+    rows = metric_delta_rows(run_id)
+    resource_changes = []
+    previous_food = None
+    previous_materials = None
+    for row in rows:
+        snapshot_summary = row.get("household_resource_summary")
+        if not snapshot_summary:
+            continue
+        food = snapshot_summary.get("total_food")
+        materials = snapshot_summary.get("total_materials")
+        food_delta = "n/a" if previous_food is None else f"{food - previous_food:+.2f}"
+        material_delta = "n/a" if previous_materials is None else f"{materials - previous_materials:+.2f}"
+        resource_changes.append(f"- tick {row['tick']}: food={food} ({food_delta}); materials={materials} ({material_delta})")
+        previous_food = food
+        previous_materials = materials
+    influenced = [
+        decision
+        for decision in session.query(Decision).filter(Decision.run_id == run_id).order_by(Decision.tick, Decision.agent_id).all()
+        if any("household_food=" in reason or "household_materials=" in reason for reason in decision.reasons)
+    ][:3]
+    examples = [
+        f"- decision tick {decision.tick} {decision.agent_id}: {decision.selected_action.get('action')} because {', '.join(decision.reasons[:5])}"
+        for decision in influenced
+    ]
+    return [
+        f"- total food: {summary['total_food']}",
+        f"- total materials: {summary['total_materials']}",
+        f"- average food per household: {summary['average_food_per_household']}",
+        f"- households under scarcity threshold: {summary['households_below_scarcity_threshold']}",
+        *(notable_transfers or ["- notable transfers: none recorded."]),
+        *(resource_changes[:8] or ["- resource changes by tick: no snapshot resource summaries available."]),
+        *(examples or ["- examples: no resource-influenced decisions found."]),
     ]

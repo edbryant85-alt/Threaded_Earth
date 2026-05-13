@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 
 from threaded_earth.memory import RetrievedMemory
 from threaded_earth.models import Agent, Goal, Household, Relationship
+from threaded_earth.resources import household_food, household_materials
 
 
 GOAL_TYPES = {
@@ -151,7 +152,8 @@ def _desired_goals(
 ) -> dict[str, tuple[float, str]]:
     desired: dict[str, tuple[float, str]] = {}
     needs = agent.needs
-    food_stores = float(household.stored_resources.get("grain", 0)) + float(household.stored_resources.get("fish", 0))
+    food_stores = household_food(household)
+    material_stores = household_materials(household)
     avg_trust = sum(rel.trust for rel in relationships) / len(relationships) if relationships else 0.4
     avg_affinity = sum(rel.affinity for rel in relationships) / len(relationships) if relationships else 0.4
     avg_reputation = sum(rel.reputation for rel in relationships) / len(relationships) if relationships else 0.5
@@ -160,8 +162,9 @@ def _desired_goals(
 
     if needs.get("food", 100) < 32 or food_stores < 18:
         desired["secure_food"] = (0.62 + max(0, 32 - needs.get("food", 32)) / 100, "food need or household food pressure")
-    if food_stores < 22:
-        desired["maintain_household"] = (0.55 + max(0, 22 - food_stores) / 70, "low household food stores")
+    if food_stores < 22 or material_stores < 6:
+        scarcity = max(0, 22 - food_stores) / 70 + max(0, 6 - material_stores) / 40
+        desired["maintain_household"] = (0.55 + scarcity, "low household food or material stores")
     if avg_trust < 0.42 or avg_affinity < 0.38 or has_negative_memory:
         desired["repair_relationship"] = (0.52 + (0.12 if has_negative_memory else 0.0), "strained relationship or conflict memory")
         desired["avoid_conflict"] = (0.5 + (0.16 if has_negative_memory else 0.0), "conflict risk is visible")
