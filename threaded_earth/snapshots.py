@@ -15,7 +15,7 @@ from threaded_earth.metrics import compute_metrics
 from threaded_earth.models import Agent, Event, Household, Relationship, Resource
 from threaded_earth.paths import snapshot_path, snapshots_dir
 from threaded_earth.resources import household_resource_summary, transfers_for_tick, upkeep_stats_for_tick
-from threaded_earth.targeting import target_stats
+from threaded_earth.targeting import target_aware_stats, target_stats
 
 
 SNAPSHOT_RE = re.compile(r"^tick_(\d+)\.json$")
@@ -69,6 +69,7 @@ def build_snapshot(session: Session, run_id: str, tick: int) -> dict[str, Any]:
         "memory_summary": memory_stats(session, run_id),
         "goal_summary": goal_stats(session, run_id),
         "target_summary": target_stats(session, run_id),
+        "target_aware_summary": target_aware_stats(session, run_id),
         "metrics": compute_metrics(session, run_id),
         "event_ids": [event.event_id for event in events],
     }

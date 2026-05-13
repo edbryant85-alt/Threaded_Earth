@@ -49,6 +49,10 @@ def test_simulation_tick_event_logging_and_report(tmp_path, monkeypatch):
         assert decision.goal_influence_summary
         assert isinstance(decision.target_selection_candidates, list)
         assert isinstance(decision.target_selection_scores, dict)
+        assert isinstance(decision.target_aware_action_scores, dict)
+        assert isinstance(decision.best_target_by_action, dict)
+        assert isinstance(decision.target_aware_score_reasons, list)
+        assert isinstance(decision.final_score_breakdown, dict)
         assert session.query(Event).count() > 1
         assert (tmp_path / "run-test" / "logs" / "events.jsonl").exists()
         assert (tmp_path / "run-test" / "snapshots" / "tick_1.json").exists()
@@ -148,6 +152,19 @@ def test_resource_events_and_household_state_are_consistent(tmp_path, monkeypatc
             assert household is not None
             assert household.stored_resources[resource.resource_type] == resource.quantity
             assert resource.quantity >= 0
+
+
+def test_conflict_remains_bounded_with_target_aware_scoring(tmp_path, monkeypatch):
+    monkeypatch.setattr("threaded_earth.paths.ARTIFACTS_DIR", tmp_path)
+    config = load_config()
+    SessionLocal = session_factory(tmp_path / "test.sqlite")
+    with SessionLocal() as session:
+        initialize_run(session, "run-test", 61, config)
+        run_simulation(session, "run-test", 3, 61, config)
+        total_decisions = session.query(Decision).filter(Decision.run_id == "run-test").count()
+        conflicts = session.query(Event).filter(Event.run_id == "run-test", Event.event_type == "conflict").count()
+
+    assert conflicts / total_decisions < 0.15
 
 
 def test_household_upkeep_shortage_events_and_needs(tmp_path, monkeypatch):

@@ -8,7 +8,7 @@ from threaded_earth.goals import goal_adjustments, summarize_goal_influence
 from threaded_earth.memory import RetrievedMemory, memory_adjustments, summarize_memory_influence
 from threaded_earth.models import Agent, Goal, Household, Relationship
 from threaded_earth.resources import household_food, household_materials
-from threaded_earth.targeting import select_target_for_action
+from threaded_earth.targeting import TargetSelection, evaluate_target_aware_actions
 
 
 @dataclass(frozen=True)
@@ -33,6 +33,10 @@ class DecisionTrace:
     target_selection_reasons: list[str]
     target_memory_factors: dict[str, Any]
     target_goal_factors: dict[str, Any]
+    target_aware_action_scores: dict[str, float]
+    best_target_by_action: dict[str, Any]
+    target_aware_score_reasons: list[str]
+    final_score_breakdown: dict[str, Any]
 
 
 def choose_action(
@@ -72,12 +76,32 @@ def choose_action(
 
     adjustments = memory_adjustments(retrieved_memories, avg_trust)
     goal_scores = goal_adjustments(active_goals)
+    target_evaluation = evaluate_target_aware_actions(
+        [candidate["action"] for candidate in candidates],
+        agent,
+        relationships,
+        retrieved_memories,
+        active_goals,
+        households_by_agent,
+    )
     for candidate in candidates:
         candidate["base_score"] = round(candidate["score"], 3)
         candidate["memory_adjustment"] = adjustments.get(candidate["action"], 0.0)
         candidate["goal_adjustment"] = goal_scores.get(candidate["action"], 0.0)
+        candidate["target_aware_adjustment"] = target_evaluation.target_aware_action_scores.get(candidate["action"], 0.0)
+        candidate["best_target"] = target_evaluation.best_target_by_action.get(candidate["action"])
+        if candidate["action"] in target_evaluation.selections_by_action:
+            candidate["target_candidates"] = target_evaluation.selections_by_action[
+                candidate["action"]
+            ].target_selection_candidates
         candidate["score"] = round(
-            max(0.01, candidate["score"] + candidate["memory_adjustment"] + candidate["goal_adjustment"]),
+            max(
+                0.01,
+                candidate["score"]
+                + candidate["memory_adjustment"]
+                + candidate["goal_adjustment"]
+                + candidate["target_aware_adjustment"],
+            ),
             3,
         )
 
@@ -91,14 +115,9 @@ def choose_action(
             selected = candidate
             break
 
-    target_selection = select_target_for_action(
-        selected["action"],
-        agent,
-        relationships,
-        retrieved_memories,
-        active_goals,
-        households_by_agent,
-    )
+    target_selection = target_evaluation.selections_by_action.get(selected["action"])
+    if target_selection is None:
+        target_selection = TargetSelection(None, [], {}, [], {}, {})
 
     sorted_scores = sorted((candidate["score"] for candidate in candidates), reverse=True)
     confidence = min(0.95, max(0.35, sorted_scores[0] / max(0.01, total) + 0.32))
@@ -120,6 +139,19 @@ def choose_action(
     if target_selection.selected_target_agent_id:
         reasons.append(f"selected_target_agent_id={target_selection.selected_target_agent_id}")
         reasons.append(f"target_selection_scores={target_selection.target_selection_scores}")
+    if any(target_evaluation.target_aware_action_scores.values()):
+        reasons.append(f"target_aware_action_scores={target_evaluation.target_aware_action_scores}")
+        reasons.extend(target_evaluation.target_aware_score_reasons[:4])
+    final_breakdown = {
+        candidate["action"]: {
+            "base_score": candidate["base_score"],
+            "memory_adjustment": candidate["memory_adjustment"],
+            "goal_adjustment": candidate["goal_adjustment"],
+            "target_aware_adjustment": candidate["target_aware_adjustment"],
+            "final_score": candidate["score"],
+        }
+        for candidate in candidates
+    }
     return DecisionTrace(
         candidate_actions=candidates,
         selected_action={
@@ -145,6 +177,10 @@ def choose_action(
         target_selection_reasons=target_selection.target_selection_reasons,
         target_memory_factors=target_selection.target_memory_factors,
         target_goal_factors=target_selection.target_goal_factors,
+        target_aware_action_scores=target_evaluation.target_aware_action_scores,
+        best_target_by_action=target_evaluation.best_target_by_action,
+        target_aware_score_reasons=target_evaluation.target_aware_score_reasons,
+        final_score_breakdown=final_breakdown,
     )
 
 

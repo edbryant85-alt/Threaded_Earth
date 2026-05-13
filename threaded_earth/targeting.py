@@ -23,6 +23,15 @@ class TargetSelection:
     target_goal_factors: dict[str, Any]
 
 
+@dataclass(frozen=True)
+class TargetAwareActionEvaluation:
+    target_aware_action_scores: dict[str, float]
+    best_target_by_action: dict[str, Any]
+    target_aware_score_reasons: list[str]
+    selections_by_action: dict[str, TargetSelection]
+    social_candidates_evaluated: int
+
+
 def select_target_for_action(
     action: str,
     agent: Agent,
@@ -82,6 +91,74 @@ def select_target_for_action(
     )
 
 
+def evaluate_target_aware_actions(
+    actions: list[str],
+    agent: Agent,
+    relationships: list[Relationship],
+    memories: list[RetrievedMemory],
+    goals: list[Goal],
+    households_by_agent: dict[str, Household] | None = None,
+) -> TargetAwareActionEvaluation:
+    action_scores: dict[str, float] = {}
+    best_by_action: dict[str, Any] = {}
+    reasons: list[str] = []
+    selections: dict[str, TargetSelection] = {}
+    evaluated = 0
+    for action in actions:
+        if action not in SOCIAL_ACTIONS:
+            continue
+        selection = select_target_for_action(action, agent, relationships, memories, goals, households_by_agent)
+        selections[action] = selection
+        evaluated += len(selection.target_selection_candidates)
+        best = selection.target_selection_candidates[0] if selection.target_selection_candidates else None
+        if not best:
+            action_scores[action] = 0.0
+            continue
+        contribution = _target_aware_contribution(action, best)
+        action_scores[action] = contribution
+        best_by_action[action] = {
+            "target_agent_id": best["target_agent_id"],
+            "target_score": best["score"],
+            "target_aware_contribution": contribution,
+            "trust": best["trust"],
+            "affinity": best["affinity"],
+            "reputation": best["reputation"],
+            "kinship_relation": best["kinship_relation"],
+            "memory_factor": best["memory_factor"],
+            "goal_factor": best["goal_factor"],
+            "resource_bonus": best["resource_bonus"],
+        }
+        reasons.extend(_target_aware_reasons(action, best, contribution))
+    return TargetAwareActionEvaluation(
+        target_aware_action_scores=action_scores,
+        best_target_by_action=best_by_action,
+        target_aware_score_reasons=reasons[:12],
+        selections_by_action=selections,
+        social_candidates_evaluated=evaluated,
+    )
+
+
+def target_aware_stats(session: Session, run_id: str) -> dict[str, Any]:
+    decisions = session.query(Decision).filter(Decision.run_id == run_id).all()
+    with_scores = [decision for decision in decisions if any(decision.target_aware_action_scores.values())]
+    reason_counts: dict[str, int] = {}
+    social_candidates = 0
+    for decision in with_scores:
+        social_candidates += sum(
+            len(candidate.get("target_candidates", []))
+            for candidate in decision.candidate_actions
+            if candidate.get("target_candidates")
+        )
+        for reason in decision.target_aware_score_reasons:
+            category = reason.split(":", 1)[0]
+            reason_counts[category] = reason_counts.get(category, 0) + 1
+    return {
+        "decisions_with_target_aware_scores": len(with_scores),
+        "social_candidates_evaluated": social_candidates,
+        "common_target_aware_reasons": dict(sorted(reason_counts.items(), key=lambda item: (-item[1], item[0]))[:8]),
+    }
+
+
 def social_action_label(action: str, goals: list[Goal]) -> str:
     goal_types = {goal.goal_type for goal in goals}
     if action == "cooperate" and "repair_relationship" in goal_types:
@@ -117,6 +194,40 @@ def target_stats(session: Session, run_id: str) -> dict[str, Any]:
         "most_targeted_agents": dict(sorted(by_target.items(), key=lambda item: (-item[1], item[0]))[:8]),
         "social_actions_by_type": dict(sorted(by_action.items())),
     }
+
+
+def _target_aware_contribution(action: str, best: dict[str, Any]) -> float:
+    raw = max(0.0, float(best["score"]))
+    if action == "conflict_over_food":
+        return round(min(0.045, raw * 0.035), 3)
+    if action == "avoid_conflict":
+        return round(min(0.075, raw * 0.06), 3)
+    if action == "repair_relationship":
+        return round(min(0.09, raw * 0.07), 3)
+    if action == "share_food":
+        return round(min(0.11, raw * 0.08), 3)
+    if action == "cooperate":
+        return round(min(0.105, raw * 0.075), 3)
+    return 0.0
+
+
+def _target_aware_reasons(action: str, best: dict[str, Any], contribution: float) -> list[str]:
+    reasons = [f"{action}:best_target={best['target_agent_id']} contribution={contribution:+.3f}"]
+    if best["kinship_relation"] == "household kin":
+        reasons.append(f"{action}:kinship")
+    if best["trust"] >= 0.65:
+        reasons.append(f"{action}:high_trust")
+    if best["trust"] <= 0.35:
+        reasons.append(f"{action}:low_trust")
+    if best["memory_factor"]["positive"] > 0:
+        reasons.append(f"{action}:positive_memory")
+    if best["memory_factor"]["negative"] > 0:
+        reasons.append(f"{action}:negative_memory")
+    if best["goal_factor"]["goal_types"]:
+        reasons.append(f"{action}:goal_{'+'.join(best['goal_factor']['goal_types'])}")
+    if best["resource_bonus"] > 0:
+        reasons.append(f"{action}:target_scarcity")
+    return reasons
 
 
 def _base_score(action: str, relationship: Relationship) -> float:

@@ -10,7 +10,7 @@ from threaded_earth.models import Decision, Event, Goal, Memory, Resource, Run
 from threaded_earth.paths import report_path
 from threaded_earth.resources import household_resource_summary
 from threaded_earth.snapshots import DELTA_METRICS, metric_delta_rows
-from threaded_earth.targeting import SOCIAL_ACTIONS, target_stats
+from threaded_earth.targeting import SOCIAL_ACTIONS, target_aware_stats, target_stats
 
 
 def generate_report(session: Session, run_id: str) -> Path:
@@ -168,6 +168,7 @@ def _goal_dynamics_lines(session: Session, run_id: str) -> list[str]:
 
 def _targeted_social_lines(session: Session, run_id: str) -> list[str]:
     stats = target_stats(session, run_id)
+    aware_stats = target_aware_stats(session, run_id)
     decisions = (
         session.query(Decision)
         .filter(Decision.run_id == run_id)
@@ -192,11 +193,24 @@ def _targeted_social_lines(session: Session, run_id: str) -> list[str]:
         f"{decision.selected_action.get('action')} because {', '.join(decision.target_selection_reasons[:4])}"
         for decision in targeted
     ][:5]
+    aware_examples = [
+        f"- target-aware tick {decision.tick} {decision.agent_id}: {decision.selected_action.get('action')} "
+        f"target={decision.selected_target_agent_id}; {', '.join(decision.target_aware_score_reasons[:3])}"
+        for decision in targeted
+        if any(decision.target_aware_action_scores.values())
+    ][:5]
+    reason_counts = ", ".join(
+        f"{reason}={count}" for reason, count in aware_stats["common_target_aware_reasons"].items()
+    ) or "none"
     return [
         f"- targeted social decisions: {stats['targeted_social_decisions']}",
         f"- untargeted social decisions: {stats['untargeted_social_decisions']}",
+        f"- decisions with target-aware score contribution: {aware_stats['decisions_with_target_aware_scores']}",
+        f"- social target candidates evaluated: {aware_stats['social_candidates_evaluated']}",
+        f"- common target-aware reasons: {reason_counts}",
         f"- most-targeted agents: {most_targeted}",
         *(examples or ["- examples: no targeted social decisions recorded."]),
+        *(aware_examples or ["- target-aware examples: no target-aware score contributions recorded."]),
         *([f"- warning: {len(untargeted)} social decisions had no target."] if untargeted else []),
     ]
 

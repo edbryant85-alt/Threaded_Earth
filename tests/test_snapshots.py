@@ -38,6 +38,7 @@ def test_snapshot_creation_path_and_json_shape(tmp_path, monkeypatch):
         assert "total_memories" in data["memory_summary"]
         assert "total_active_goals" in data["goal_summary"]
         assert "targeted_social_decisions" in data["target_summary"]
+        assert "decisions_with_target_aware_scores" in data["target_aware_summary"]
         assert "total_food" in data["household_resource_summary"]
         assert "resource_transfers_this_tick" in data
         assert "upkeep_summary" in data
@@ -109,6 +110,7 @@ def test_report_includes_metric_deltas(tmp_path, monkeypatch):
     assert "## Memory Influence" in text
     assert "## Goal Dynamics" in text
     assert "## Targeted Social Actions" in text
+    assert "target-aware" in text
     assert "## Household Resources" in text
     assert "shortage" in text
     assert "relationship_density" in text
@@ -132,6 +134,7 @@ def test_dashboard_run_page_renders_snapshot_information(tmp_path, monkeypatch):
     assert "Memory Observability" in html
     assert "Goal Observability" in html
     assert "Target Observability" in html
+    assert "Target-aware decisions" in html
     assert "Household Resources" in html
     assert "Latest daily consumption" in html
     assert "Latest tick: <strong>2</strong>" in html
