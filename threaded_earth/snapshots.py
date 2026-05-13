@@ -14,6 +14,7 @@ from threaded_earth.memory import memory_stats
 from threaded_earth.metrics import compute_metrics
 from threaded_earth.models import Agent, Event, Household, Relationship, Resource
 from threaded_earth.paths import snapshot_path, snapshots_dir
+from threaded_earth.propagation import propagation_stats_for_tick
 from threaded_earth.resources import household_resource_summary, transfers_for_tick, upkeep_stats_for_tick
 from threaded_earth.targeting import target_aware_stats, target_stats
 
@@ -70,6 +71,7 @@ def build_snapshot(session: Session, run_id: str, tick: int) -> dict[str, Any]:
         "goal_summary": goal_stats(session, run_id),
         "target_summary": target_stats(session, run_id),
         "target_aware_summary": target_aware_stats(session, run_id),
+        "propagation_summary": propagation_stats_for_tick(session, run_id, tick),
         "metrics": compute_metrics(session, run_id),
         "event_ids": [event.event_id for event in events],
     }
@@ -134,6 +136,7 @@ def metric_delta_rows(run_id: str) -> list[dict[str, Any]]:
             "deltas": {},
             "household_resource_summary": snapshot.get("household_resource_summary"),
             "upkeep_summary": snapshot.get("upkeep_summary"),
+            "propagation_summary": snapshot.get("propagation_summary"),
         }
         for key in DELTA_METRICS:
             current_value = metrics.get(key)

@@ -40,6 +40,15 @@ class UpkeepConfig(BaseModel):
     material_decay_per_household: float = 0.0
 
 
+class PropagationConfig(BaseModel):
+    propagation_enabled: bool = True
+    propagation_max_observers: int = 5
+    propagation_strength: float = 0.2
+    propagation_min_relationship_threshold: float = 0.62
+    propagation_create_memories: bool = True
+    propagation_memory_salience_multiplier: float = 0.45
+
+
 class SimulationConfig(BaseModel):
     population_size: int = 50
     settlement: SettlementConfig
@@ -47,6 +56,7 @@ class SimulationConfig(BaseModel):
     household: HouseholdConfig = Field(default_factory=HouseholdConfig)
     decision: DecisionConfig = Field(default_factory=DecisionConfig)
     upkeep: UpkeepConfig = Field(default_factory=UpkeepConfig)
+    propagation: PropagationConfig = Field(default_factory=PropagationConfig)
 
 
 class ThreadedEarthConfig(BaseModel):

@@ -10,6 +10,7 @@ from threaded_earth.goals import goal_stats
 from threaded_earth.memory import memory_stats
 from threaded_earth.models import Agent, Decision, Event, Goal, Memory, Run
 from threaded_earth.paths import ARTIFACTS_DIR, db_path, metrics_path
+from threaded_earth.propagation import propagation_stats, recent_propagation_events
 from threaded_earth.resources import household_resource_summary, upkeep_stats_for_tick
 from threaded_earth.snapshots import DELTA_METRICS, metric_delta_rows, snapshot_inventory
 from threaded_earth.targeting import SOCIAL_ACTIONS, target_aware_stats, target_stats
@@ -43,6 +44,7 @@ def run_detail(run_id: str) -> str:
         goal_summary = goal_stats(session, run_id)
         target_summary = target_stats(session, run_id)
         target_aware_summary = target_aware_stats(session, run_id)
+        propagation_summary = propagation_stats(session, run_id)
         resource_summary = household_resource_summary(session, run_id)
         recent_goals = (
             session.query(Goal)
@@ -84,6 +86,7 @@ def run_detail(run_id: str) -> str:
             for event in events
             if event.event_type == "household_shortage"
         ][:10]
+        recent_propagations = recent_propagation_events(session, run_id, 10)
         influenced_count = sum(1 for decision in influenced_decisions if decision.retrieved_memory_ids)
         goal_influenced_count = sum(1 for decision in influenced_decisions if decision.active_goal_ids)
     metrics = {}
@@ -136,6 +139,18 @@ def run_detail(run_id: str) -> str:
         f"<tr><td>{event.tick}</td><td>{event.target}</td><td>{event.payload.get('shortage_amount')}</td><td>{event.summary}</td></tr>"
         for event in recent_shortages
     )
+    propagation_reason_rows = "".join(
+        f"<tr><td>{reason}</td><td>{count}</td></tr>"
+        for reason, count in propagation_summary["common_propagation_reasons"].items()
+    )
+    visible_agent_rows = "".join(
+        f"<tr><td>{agent_id}</td><td>{count}</td></tr>"
+        for agent_id, count in propagation_summary["most_socially_visible_agents"].items()
+    )
+    propagation_rows = "".join(
+        f"<tr><td>{event.tick}</td><td>{event.payload.get('source_event_id')}</td><td>{event.payload.get('observer_agent_id')}</td><td>{event.payload.get('subject_agent_id')}</td><td>{event.payload.get('propagation_reason')}</td></tr>"
+        for event in recent_propagations
+    )
     latest_tick = inventory.latest_tick if inventory.latest_tick is not None else "none"
     expected_ticks = inventory.expected_ticks if inventory.expected_ticks is not None else "unknown"
     return _page(
@@ -168,6 +183,11 @@ def run_detail(run_id: str) -> str:
         <table><tr><th>Household</th><th>Name</th><th>Members</th><th>Food</th><th>Food / Member</th><th>Materials</th></tr>{household_resource_rows}</table>
         <table><tr><th>Tick</th><th>Household</th><th>Shortage</th><th>Shortage Event</th></tr>{shortage_rows or '<tr><td colspan="4">No recent shortages.</td></tr>'}</table>
         <table><tr><th>Tick</th><th>Type</th><th>Resource Event</th></tr>{resource_event_rows or '<tr><td colspan="3">No recent resource events.</td></tr>'}</table>
+        <h2>Social Propagation</h2>
+        <p>Propagated events: <strong>{propagation_summary['propagated_event_count']}</strong> | Propagated memories: <strong>{propagation_summary['propagated_memory_count']}</strong></p>
+        <table><tr><th>Propagation Reason</th><th>Count</th></tr>{propagation_reason_rows or '<tr><td colspan="2">No propagation reasons recorded.</td></tr>'}</table>
+        <table><tr><th>Visible Agent</th><th>Count</th></tr>{visible_agent_rows or '<tr><td colspan="2">No socially visible agents recorded.</td></tr>'}</table>
+        <table><tr><th>Tick</th><th>Source Event</th><th>Observer</th><th>Subject</th><th>Reason</th></tr>{propagation_rows or '<tr><td colspan="5">No recent propagation events.</td></tr>'}</table>
         <h2>Recent Events</h2><table><tr><th>Tick</th><th>Type</th><th>Summary</th></tr>{event_rows}</table>
         <h2>Recent Decisions</h2><table><tr><th>Tick</th><th>Agent</th><th>Selected</th><th>Confidence</th></tr>{decision_rows}</table>
         """,

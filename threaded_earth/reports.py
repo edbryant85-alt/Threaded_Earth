@@ -8,6 +8,7 @@ from threaded_earth.goals import goal_stats
 from threaded_earth.metrics import compute_metrics, write_metrics
 from threaded_earth.models import Decision, Event, Goal, Memory, Resource, Run
 from threaded_earth.paths import report_path
+from threaded_earth.propagation import propagation_stats
 from threaded_earth.resources import household_resource_summary
 from threaded_earth.snapshots import DELTA_METRICS, metric_delta_rows
 from threaded_earth.targeting import SOCIAL_ACTIONS, target_aware_stats, target_stats
@@ -39,6 +40,7 @@ def generate_report(session: Session, run_id: str) -> Path:
     goal_lines = _goal_dynamics_lines(session, run_id)
     target_lines = _targeted_social_lines(session, run_id)
     household_resource_lines = _household_resource_lines(session, run_id)
+    propagation_lines = _social_propagation_lines(session, run_id)
 
     path = report_path(run_id)
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -70,6 +72,9 @@ def generate_report(session: Session, run_id: str) -> Path:
                 "",
                 "## Household Resources",
                 *household_resource_lines,
+                "",
+                "## Social Propagation",
+                *propagation_lines,
                 "",
                 "## Major Events",
                 *(event_lines or ["- No major events recorded."]),
@@ -275,4 +280,33 @@ def _household_resource_lines(session: Session, run_id: str) -> list[str]:
         *(notable_transfers or ["- notable transfers: none recorded."]),
         *(resource_changes[:8] or ["- resource changes by tick: no snapshot resource summaries available."]),
         *(examples or ["- examples: no resource-influenced decisions found."]),
+    ]
+
+
+def _social_propagation_lines(session: Session, run_id: str) -> list[str]:
+    stats = propagation_stats(session, run_id)
+    propagation_events = (
+        session.query(Event)
+        .filter(Event.run_id == run_id, Event.event_type == "social_propagation")
+        .order_by(Event.tick, Event.event_id)
+        .all()
+    )
+    reasons = ", ".join(
+        f"{reason}={count}" for reason, count in stats["common_propagation_reasons"].items()
+    ) or "none"
+    visible = ", ".join(
+        f"{agent_id}={count}" for agent_id, count in stats["most_socially_visible_agents"].items()
+    ) or "none"
+    examples = [
+        f"- example tick {event.tick}: source={event.payload.get('source_event_id')} "
+        f"observer={event.payload.get('observer_agent_id')} subject={event.payload.get('subject_agent_id')} "
+        f"reason={event.payload.get('propagation_reason')} delta={event.payload.get('relationship_delta')}"
+        for event in propagation_events[:5]
+    ]
+    return [
+        f"- events propagated: {stats['propagated_event_count']}",
+        f"- propagated memories: {stats['propagated_memory_count']}",
+        f"- most common propagation reasons: {reasons}",
+        f"- most socially visible agents: {visible}",
+        *(examples or ["- examples: no social propagation events recorded."]),
     ]

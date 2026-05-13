@@ -21,6 +21,13 @@ simulation:
     food_shortage_memory_threshold: 1.0
     material_decay_enabled: false
     material_decay_per_household: 0.0
+  propagation:
+    propagation_enabled: true
+    propagation_max_observers: 5
+    propagation_strength: 0.2
+    propagation_min_relationship_threshold: 0.62
+    propagation_create_memories: true
+    propagation_memory_salience_multiplier: 0.45
 
 archetypes:
   - cultivator
