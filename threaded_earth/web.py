@@ -11,6 +11,7 @@ from threaded_earth.memory import memory_stats
 from threaded_earth.models import Agent, Decision, Event, Goal, Memory, Run
 from threaded_earth.paths import ARTIFACTS_DIR, db_path, metrics_path
 from threaded_earth.snapshots import DELTA_METRICS, metric_delta_rows, snapshot_inventory
+from threaded_earth.targeting import SOCIAL_ACTIONS, target_stats
 
 
 app = FastAPI(title="Threaded Earth")
@@ -39,6 +40,7 @@ def run_detail(run_id: str) -> str:
         inventory = snapshot_inventory(session, run_id)
         memory_summary = memory_stats(session, run_id)
         goal_summary = goal_stats(session, run_id)
+        target_summary = target_stats(session, run_id)
         recent_goals = (
             session.query(Goal)
             .filter(Goal.run_id == run_id, Goal.status == "active")
@@ -58,6 +60,11 @@ def run_detail(run_id: str) -> str:
             .filter(Decision.run_id == run_id)
             .all()
         )
+        recent_targeted = [
+            decision
+            for decision in sorted(influenced_decisions, key=lambda item: (item.tick, item.agent_id), reverse=True)
+            if decision.selected_action.get("action") in SOCIAL_ACTIONS and decision.selected_target_agent_id
+        ][:10]
         influenced_count = sum(1 for decision in influenced_decisions if decision.retrieved_memory_ids)
         goal_influenced_count = sum(1 for decision in influenced_decisions if decision.active_goal_ids)
     metrics = {}
@@ -82,6 +89,14 @@ def run_detail(run_id: str) -> str:
         f"<tr><td>{goal.agent_id}</td><td>{goal.goal_type}</td><td>{goal.priority:.2f}</td><td>{goal.updated_tick}</td><td>{goal.source_reason}</td></tr>"
         for goal in recent_goals
     )
+    target_rows = "".join(
+        f"<tr><td>{agent_id}</td><td>{count}</td></tr>"
+        for agent_id, count in target_summary["most_targeted_agents"].items()
+    )
+    recent_target_rows = "".join(
+        f"<tr><td>{decision.tick}</td><td>{decision.agent_id}</td><td>{decision.selected_action.get('action')}</td><td>{decision.selected_target_agent_id}</td><td>{'; '.join(decision.target_selection_reasons[:3])}</td></tr>"
+        for decision in recent_targeted
+    )
     latest_tick = inventory.latest_tick if inventory.latest_tick is not None else "none"
     expected_ticks = inventory.expected_ticks if inventory.expected_ticks is not None else "unknown"
     return _page(
@@ -101,6 +116,10 @@ def run_detail(run_id: str) -> str:
         <p>Active goals: <strong>{goal_summary['total_active_goals']}</strong> | Average per agent: <strong>{goal_summary['average_active_goals_per_agent']}</strong> | Satisfied: <strong>{goal_summary['satisfied_count']}</strong> | Abandoned: <strong>{goal_summary['abandoned_count']}</strong> | Goal-influenced decisions: <strong>{goal_influenced_count}</strong></p>
         <table><tr><th>Goal Type</th><th>Active Count</th></tr>{goal_type_rows or '<tr><td colspan="2">No active goals.</td></tr>'}</table>
         <table><tr><th>Agent</th><th>Goal</th><th>Priority</th><th>Updated Tick</th><th>Reason</th></tr>{goal_rows or '<tr><td colspan="5">No active goals.</td></tr>'}</table>
+        <h2>Target Observability</h2>
+        <p>Targeted social decisions: <strong>{target_summary['targeted_social_decisions']}</strong> | Untargeted social decisions: <strong>{target_summary['untargeted_social_decisions']}</strong></p>
+        <table><tr><th>Target Agent</th><th>Count</th></tr>{target_rows or '<tr><td colspan="2">No targeted social decisions.</td></tr>'}</table>
+        <table><tr><th>Tick</th><th>Actor</th><th>Action</th><th>Target</th><th>Reasons</th></tr>{recent_target_rows or '<tr><td colspan="5">No recent targeted social actions.</td></tr>'}</table>
         <h2>Recent Events</h2><table><tr><th>Tick</th><th>Type</th><th>Summary</th></tr>{event_rows}</table>
         <h2>Recent Decisions</h2><table><tr><th>Tick</th><th>Agent</th><th>Selected</th><th>Confidence</th></tr>{decision_rows}</table>
         """,

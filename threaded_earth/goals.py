@@ -88,6 +88,8 @@ def goal_adjustments(goals: list[Goal]) -> dict[str, float]:
         "rest": 0.0,
         "share_food": 0.0,
         "conflict_over_food": 0.0,
+        "avoid_conflict": 0.0,
+        "repair_relationship": 0.0,
     }
     for goal in goals:
         weight = min(0.1, goal.priority * 0.08)
@@ -98,6 +100,7 @@ def goal_adjustments(goals: list[Goal]) -> dict[str, float]:
             adjustments["seek_food"] += weight * 0.75
             adjustments["share_food"] += weight * 0.3
         elif goal.goal_type == "repair_relationship":
+            adjustments["repair_relationship"] += weight
             adjustments["cooperate"] += weight
             adjustments["share_food"] += weight * 0.45
             adjustments["conflict_over_food"] -= weight * 0.75
@@ -105,6 +108,7 @@ def goal_adjustments(goals: list[Goal]) -> dict[str, float]:
             adjustments["cooperate"] += weight
             adjustments["share_food"] += weight * 0.4
         elif goal.goal_type == "avoid_conflict":
+            adjustments["avoid_conflict"] += weight
             adjustments["conflict_over_food"] -= weight
             adjustments["cooperate"] += weight * 0.25
         elif goal.goal_type == "improve_reputation":

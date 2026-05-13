@@ -7,6 +7,7 @@ from typing import Any
 from threaded_earth.goals import goal_adjustments, summarize_goal_influence
 from threaded_earth.memory import RetrievedMemory, memory_adjustments, summarize_memory_influence
 from threaded_earth.models import Agent, Goal, Household, Relationship
+from threaded_earth.targeting import select_target_for_action
 
 
 @dataclass(frozen=True)
@@ -25,6 +26,12 @@ class DecisionTrace:
     active_goal_ids: list[str]
     goal_influence_summary: str
     goal_score_adjustments: dict[str, float]
+    selected_target_agent_id: str | None
+    target_selection_candidates: list[dict[str, Any]]
+    target_selection_scores: dict[str, float]
+    target_selection_reasons: list[str]
+    target_memory_factors: dict[str, Any]
+    target_goal_factors: dict[str, Any]
 
 
 def choose_action(
@@ -35,6 +42,7 @@ def choose_action(
     tick: int,
     retrieved_memories: list[RetrievedMemory] | None = None,
     active_goals: list[Goal] | None = None,
+    households_by_agent: dict[str, Household] | None = None,
 ) -> DecisionTrace:
     retrieved_memories = retrieved_memories or []
     active_goals = active_goals or []
@@ -49,6 +57,8 @@ def choose_action(
         _candidate("cooperate", 0.22 + avg_trust * 0.45 + needs["belonging"] / 180, "strengthens a nearby tie"),
         _candidate("rest", 0.2 + max(0, 30 - needs["rest"]) / 80, "restores personal energy"),
         _candidate("share_food", 0.15 + avg_affinity * 0.35 if food_stores > 14 else 0.05, "transfers food to a strained household"),
+        _candidate("repair_relationship", 0.08 + max(0, 0.5 - avg_trust) * 0.18, "repairs a strained social tie"),
+        _candidate("avoid_conflict", 0.06 + max(0, 0.48 - avg_trust) * 0.2, "keeps distance from a risky tie"),
         _candidate("conflict_over_food", 0.05 + pressure * 0.28 + max(0, 0.45 - avg_trust) * 0.3, "contests scarce food"),
     ]
     if agent.archetype in {"cultivator", "gatherer", "fisher", "hunter"}:
@@ -79,6 +89,15 @@ def choose_action(
             selected = candidate
             break
 
+    target_selection = select_target_for_action(
+        selected["action"],
+        agent,
+        relationships,
+        retrieved_memories,
+        active_goals,
+        households_by_agent,
+    )
+
     sorted_scores = sorted((candidate["score"] for candidate in candidates), reverse=True)
     confidence = min(0.95, max(0.35, sorted_scores[0] / max(0.01, total) + 0.32))
     reasons = [
@@ -95,9 +114,16 @@ def choose_action(
     if active_goals:
         reasons.append(f"active_goal_ids={[goal.goal_id for goal in active_goals]}")
         reasons.append(f"goal_score_adjustments={goal_scores}")
+    if target_selection.selected_target_agent_id:
+        reasons.append(f"selected_target_agent_id={target_selection.selected_target_agent_id}")
+        reasons.append(f"target_selection_scores={target_selection.target_selection_scores}")
     return DecisionTrace(
         candidate_actions=candidates,
-        selected_action={"action": selected["action"], "score": round(selected["score"], 3)},
+        selected_action={
+            "action": selected["action"],
+            "score": round(selected["score"], 3),
+            "selected_target_agent_id": target_selection.selected_target_agent_id,
+        },
         reasons=reasons,
         confidence=round(confidence, 3),
         uncertainty_notes="Local symbolic rule choice; no hidden model or LLM inference used.",
@@ -110,6 +136,12 @@ def choose_action(
         active_goal_ids=[goal.goal_id for goal in active_goals],
         goal_influence_summary=summarize_goal_influence(active_goals, goal_scores),
         goal_score_adjustments=goal_scores,
+        selected_target_agent_id=target_selection.selected_target_agent_id,
+        target_selection_candidates=target_selection.target_selection_candidates,
+        target_selection_scores=target_selection.target_selection_scores,
+        target_selection_reasons=target_selection.target_selection_reasons,
+        target_memory_factors=target_selection.target_memory_factors,
+        target_goal_factors=target_selection.target_goal_factors,
     )
 
 

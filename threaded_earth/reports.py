@@ -9,6 +9,7 @@ from threaded_earth.metrics import compute_metrics, write_metrics
 from threaded_earth.models import Decision, Event, Goal, Memory, Resource, Run
 from threaded_earth.paths import report_path
 from threaded_earth.snapshots import DELTA_METRICS, metric_delta_rows
+from threaded_earth.targeting import SOCIAL_ACTIONS, target_stats
 
 
 def generate_report(session: Session, run_id: str) -> Path:
@@ -35,6 +36,7 @@ def generate_report(session: Session, run_id: str) -> Path:
     delta_lines = _metric_delta_lines(run_id)
     memory_lines = _memory_influence_lines(session, run_id)
     goal_lines = _goal_dynamics_lines(session, run_id)
+    target_lines = _targeted_social_lines(session, run_id)
 
     path = report_path(run_id)
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -60,6 +62,9 @@ def generate_report(session: Session, run_id: str) -> Path:
                 "",
                 "## Goal Dynamics",
                 *goal_lines,
+                "",
+                "## Targeted Social Actions",
+                *target_lines,
                 "",
                 "## Major Events",
                 *(event_lines or ["- No major events recorded."]),
@@ -153,4 +158,39 @@ def _goal_dynamics_lines(session: Session, run_id: str) -> list[str]:
         f"- decisions influenced by goals: {len(influenced)} of {len(decisions)}",
         *(examples or ["- examples: no decisions had non-zero goal score adjustments."]),
         *(notable or ["- notable agents: no active high-priority goals."]),
+    ]
+
+
+def _targeted_social_lines(session: Session, run_id: str) -> list[str]:
+    stats = target_stats(session, run_id)
+    decisions = (
+        session.query(Decision)
+        .filter(Decision.run_id == run_id)
+        .order_by(Decision.tick, Decision.agent_id)
+        .all()
+    )
+    targeted = [
+        decision
+        for decision in decisions
+        if decision.selected_action.get("action") in SOCIAL_ACTIONS and decision.selected_target_agent_id
+    ]
+    untargeted = [
+        decision
+        for decision in decisions
+        if decision.selected_action.get("action") in SOCIAL_ACTIONS and not decision.selected_target_agent_id
+    ]
+    most_targeted = ", ".join(
+        f"{agent_id}={count}" for agent_id, count in stats["most_targeted_agents"].items()
+    ) or "none"
+    examples = [
+        f"- example tick {decision.tick} {decision.agent_id} -> {decision.selected_target_agent_id}: "
+        f"{decision.selected_action.get('action')} because {', '.join(decision.target_selection_reasons[:4])}"
+        for decision in targeted
+    ][:5]
+    return [
+        f"- targeted social decisions: {stats['targeted_social_decisions']}",
+        f"- untargeted social decisions: {stats['untargeted_social_decisions']}",
+        f"- most-targeted agents: {most_targeted}",
+        *(examples or ["- examples: no targeted social decisions recorded."]),
+        *([f"- warning: {len(untargeted)} social decisions had no target."] if untargeted else []),
     ]

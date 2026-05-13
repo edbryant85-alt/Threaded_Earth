@@ -41,6 +41,7 @@ artifacts/<run_id>/
 - `threaded_earth/models.py`: SQLite persistence schema using SQLAlchemy.
 - `threaded_earth/generation.py`: seeded household, kinship, relationship, resource, and agent creation.
 - `threaded_earth/cognition.py`: transparent symbolic decision rules with candidate actions and confidence.
+- `threaded_earth/targeting.py`: explicit target selection for social actions.
 - `threaded_earth/simulation.py`: one daily tick loop with explicit state transitions.
 - `threaded_earth/events.py`: DB event creation plus JSONL logging.
 - `threaded_earth/reports.py`: Markdown research report generation.

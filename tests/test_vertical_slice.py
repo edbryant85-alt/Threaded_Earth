@@ -6,7 +6,7 @@ from threaded_earth.cli import app
 from threaded_earth.config import load_config
 from threaded_earth.db import session_factory
 from threaded_earth.events import event_log_path
-from threaded_earth.models import Agent, Decision, Event, Household, Run
+from threaded_earth.models import Agent, Decision, Event, Household, Memory, Relationship, Run
 from threaded_earth.paths import report_path, snapshot_path
 from threaded_earth.reports import generate_report
 from threaded_earth.simulation import initialize_run, run_simulation
@@ -47,6 +47,8 @@ def test_simulation_tick_event_logging_and_report(tmp_path, monkeypatch):
         assert isinstance(decision.active_goal_ids, list)
         assert isinstance(decision.goal_score_adjustments, dict)
         assert decision.goal_influence_summary
+        assert isinstance(decision.target_selection_candidates, list)
+        assert isinstance(decision.target_selection_scores, dict)
         assert session.query(Event).count() > 1
         assert (tmp_path / "run-test" / "logs" / "events.jsonl").exists()
         assert (tmp_path / "run-test" / "snapshots" / "tick_1.json").exists()
@@ -79,3 +81,47 @@ def test_cli_run_report_replay(tmp_path, monkeypatch):
     assert replay_result.exit_code == 0, replay_result.output
     assert "snapshot_replay=complete" in replay_result.output
     assert "run_initialized" in replay_result.output
+
+
+def test_social_decisions_events_memories_and_relationships_use_selected_targets(tmp_path, monkeypatch):
+    monkeypatch.setattr("threaded_earth.paths.ARTIFACTS_DIR", tmp_path)
+    config = load_config()
+    SessionLocal = session_factory(tmp_path / "test.sqlite")
+    with SessionLocal() as session:
+        initialize_run(session, "run-test", 43, config)
+        run_simulation(session, "run-test", 3, 43, config)
+
+        targeted = [
+            decision
+            for decision in session.query(Decision).filter(Decision.run_id == "run-test").all()
+            if decision.selected_target_agent_id
+        ]
+        assert targeted
+        sample = targeted[0]
+        assert sample.selected_action["selected_target_agent_id"] == sample.selected_target_agent_id
+        assert sample.target_selection_candidates
+        assert sample.target_selection_reasons
+
+        event = (
+            session.query(Event)
+            .filter(Event.run_id == "run-test", Event.actor == sample.agent_id, Event.target == sample.selected_target_agent_id)
+            .first()
+        )
+        assert event is not None
+        assert event.payload["selected_target_agent_id"] == sample.selected_target_agent_id
+
+        actor_memory = session.query(Memory).filter(Memory.agent_id == sample.agent_id, Memory.event_id == event.event_id).first()
+        target_memory = (
+            session.query(Memory)
+            .filter(Memory.agent_id == sample.selected_target_agent_id, Memory.event_id == event.event_id)
+            .first()
+        )
+        assert actor_memory is not None
+        assert target_memory is not None
+
+        relationship = (
+            session.query(Relationship)
+            .filter(Relationship.source_agent == sample.agent_id, Relationship.target_agent == sample.selected_target_agent_id)
+            .first()
+        )
+        assert relationship is not None

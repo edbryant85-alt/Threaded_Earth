@@ -70,18 +70,24 @@ def memory_adjustments(retrieved: list[RetrievedMemory], avg_trust: float) -> di
         "rest": 0.0,
         "share_food": 0.0,
         "conflict_over_food": 0.0,
+        "avoid_conflict": 0.0,
+        "repair_relationship": 0.0,
     }
     for memory in retrieved:
         weight = min(0.12, memory.score * 0.08)
         if memory.polarity == "positive":
             adjustments["cooperate"] += weight
+            adjustments["repair_relationship"] += weight * 0.35
             adjustments["share_food"] += weight * 0.55
             adjustments["conflict_over_food"] -= weight * 0.45
+            adjustments["avoid_conflict"] -= weight * 0.25
         elif memory.polarity == "negative":
             trust_buffer = 0.45 if avg_trust >= 0.68 else 1.0
             adjustments["cooperate"] -= weight * trust_buffer
+            adjustments["repair_relationship"] += weight * 0.65
             adjustments["share_food"] -= weight * 0.45
             adjustments["conflict_over_food"] += weight * 0.75
+            adjustments["avoid_conflict"] += weight * 0.85
         elif memory.polarity == "resource_stress":
             adjustments["seek_food"] += weight
             adjustments["share_food"] -= weight * 0.35
