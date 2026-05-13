@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import json
 
 from sqlalchemy.orm import Session
 
@@ -8,7 +9,7 @@ from threaded_earth.goals import goal_stats
 from threaded_earth.metrics import compute_metrics, write_metrics
 from threaded_earth.models import Decision, Event, Goal, Memory, NormCandidate, Resource, RoleSignal, Run
 from threaded_earth.norms import norm_stats
-from threaded_earth.paths import report_path
+from threaded_earth.paths import diagnostics_json_path, report_path
 from threaded_earth.propagation import propagation_pressure_rows, propagation_stats
 from threaded_earth.resources import household_resource_summary
 from threaded_earth.roles import role_stats
@@ -46,6 +47,7 @@ def generate_report(session: Session, run_id: str) -> Path:
     propagation_pressure_lines = _propagation_pressure_lines(session, run_id)
     role_lines = _role_stabilization_lines(session, run_id)
     norm_lines = _norm_candidate_lines(session, run_id)
+    diagnostics_lines = _diagnostics_lines(run_id)
 
     path = report_path(run_id)
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -89,6 +91,9 @@ def generate_report(session: Session, run_id: str) -> Path:
                 "",
                 "## Norm Candidates",
                 *norm_lines,
+                "",
+                "## Stability Diagnostics",
+                *diagnostics_lines,
                 "",
                 "## Major Events",
                 *(event_lines or ["- No major events recorded."]),
@@ -410,3 +415,20 @@ def _norm_candidate_lines(session: Session, run_id: str) -> list[str]:
         f"- emerging/stable/declining: {stats['emerging_norms']}/{stats['stable_norms']}/{stats['declining_norms']}",
         *(examples or ["- detected norms: none yet."]),
     ]
+
+
+def _diagnostics_lines(run_id: str) -> list[str]:
+    path = diagnostics_json_path(run_id)
+    if not path.exists():
+        return ["- Diagnostics have not been generated for this run yet. Run `threaded-earth diagnose --run-id RUN_ID`."]
+    data = json.loads(path.read_text(encoding="utf-8"))
+    warnings = data.get("warnings", [])
+    by_severity: dict[str, int] = {}
+    for warning in warnings:
+        by_severity[warning["severity"]] = by_severity.get(warning["severity"], 0) + 1
+    lines = [f"- {severity}: {count}" for severity, count in sorted(by_severity.items())]
+    lines.extend(
+        f"- {warning['severity']} {warning['metric_name']}: {warning['evidence_text']}"
+        for warning in warnings[:5]
+    )
+    return lines or ["- No diagnostics warnings recorded."]

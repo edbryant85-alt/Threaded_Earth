@@ -9,9 +9,21 @@ import uvicorn
 from threaded_earth.analysis import run_multi_seed_analysis
 from threaded_earth.config import load_config
 from threaded_earth.db import init_db, session_factory
+from threaded_earth.diagnostics import diagnose_analysis, diagnose_run
 from threaded_earth.events import append_jsonl
 from threaded_earth.models import Event
-from threaded_earth.paths import ARTIFACTS_DIR, DEFAULT_CONFIG_PATH, db_path, ensure_artifact_dirs, event_log_path, report_path
+from threaded_earth.paths import (
+    ARTIFACTS_DIR,
+    DEFAULT_CONFIG_PATH,
+    analysis_diagnostics_json_path,
+    analysis_diagnostics_report_path,
+    db_path,
+    diagnostics_json_path,
+    diagnostics_report_path,
+    ensure_artifact_dirs,
+    event_log_path,
+    report_path,
+)
 from threaded_earth.reports import generate_report
 from threaded_earth.snapshots import snapshot_inventory
 from threaded_earth.simulation import initialize_run, make_run_id, run_simulation
@@ -92,6 +104,35 @@ def analyze(
     typer.echo(f"analysis_report={ARTIFACTS_DIR / 'analysis' / aggregate['analysis_id'] / 'analysis.md'}")
     for run_id in aggregate["run_ids"]:
         typer.echo(f"run_id={run_id}")
+
+
+@app.command()
+def diagnose(
+    run_id: str = typer.Option(..., help="Run id to diagnose."),
+    config: Path = typer.Option(DEFAULT_CONFIG_PATH),
+) -> None:
+    database = db_path(run_id)
+    if not database.exists():
+        raise typer.BadParameter(f"No database found for {run_id}")
+    loaded = load_config(config)
+    SessionLocal = session_factory(database)
+    with SessionLocal() as session:
+        result = diagnose_run(session, run_id, loaded.simulation.diagnostics)
+    typer.echo(f"diagnostics_warnings={len(result['warnings'])}")
+    typer.echo(f"diagnostics_json={diagnostics_json_path(run_id)}")
+    typer.echo(f"diagnostics_report={diagnostics_report_path(run_id)}")
+
+
+@app.command("diagnose-analysis")
+def diagnose_analysis_command(
+    analysis_id: str = typer.Option(..., help="Analysis id to diagnose."),
+    config: Path = typer.Option(DEFAULT_CONFIG_PATH),
+) -> None:
+    loaded = load_config(config)
+    result = diagnose_analysis(analysis_id, loaded.simulation.diagnostics)
+    typer.echo(f"diagnostics_warnings={len(result['warnings'])}")
+    typer.echo(f"diagnostics_json={analysis_diagnostics_json_path(analysis_id)}")
+    typer.echo(f"diagnostics_report={analysis_diagnostics_report_path(analysis_id)}")
 
 
 @app.command()

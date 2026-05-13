@@ -10,7 +10,7 @@ from threaded_earth.goals import goal_stats
 from threaded_earth.memory import memory_stats
 from threaded_earth.models import Agent, Decision, Event, Goal, Memory, NormCandidate, RoleSignal, Run
 from threaded_earth.norms import norm_stats
-from threaded_earth.paths import ARTIFACTS_DIR, db_path, metrics_path
+from threaded_earth.paths import ARTIFACTS_DIR, db_path, diagnostics_json_path, metrics_path
 from threaded_earth.propagation import propagation_pressure_rows, propagation_stats, recent_propagation_events
 from threaded_earth.resources import household_resource_summary, upkeep_stats_for_tick
 from threaded_earth.roles import role_stats
@@ -109,6 +109,7 @@ def run_detail(run_id: str) -> str:
         influenced_count = sum(1 for decision in influenced_decisions if decision.retrieved_memory_ids)
         goal_influenced_count = sum(1 for decision in influenced_decisions if decision.active_goal_ids)
         role_influenced_count = sum(1 for decision in influenced_decisions if decision.role_signals_applied)
+        diagnostics = _load_diagnostics(run_id)
     metrics = {}
     if metrics_path(run_id).exists():
         metrics = json.loads(metrics_path(run_id).read_text(encoding="utf-8"))
@@ -187,6 +188,12 @@ def run_detail(run_id: str) -> str:
         f"<tr><td>{norm.norm_name}</td><td>{norm.status}</td><td>{norm.evidence_count}</td><td>{len(norm.contributing_agent_ids or [])}</td><td>{len(norm.contributing_household_ids or [])}</td><td>{norm.breadth_score:.2f}</td><td>{norm.support_score:.2f}</td><td>{norm.opposition_score:.2f}</td><td>{norm.last_observed_tick}</td><td>{norm.evidence_summary}</td></tr>"
         for norm in recent_norms
     )
+    diagnostic_rows = "".join(
+        f"<tr><td>{warning['severity']}</td><td>{warning['metric_name']}</td><td>{warning['evidence_text']}</td><td>{warning['recommendation']}</td></tr>"
+        for warning in diagnostics["warnings"][:12]
+    )
+    critical_count = sum(1 for warning in diagnostics["warnings"] if warning["severity"] == "critical")
+    warning_count = sum(1 for warning in diagnostics["warnings"] if warning["severity"] == "warning")
     latest_tick = inventory.latest_tick if inventory.latest_tick is not None else "none"
     expected_ticks = inventory.expected_ticks if inventory.expected_ticks is not None else "unknown"
     return _page(
@@ -233,6 +240,9 @@ def run_detail(run_id: str) -> str:
         <h2>Norm Candidates</h2>
         <p>Total: <strong>{norm_summary['norm_candidates_total']}</strong> | Emerging: <strong>{norm_summary['emerging_norms']}</strong> | Stable: <strong>{norm_summary['stable_norms']}</strong> | Declining: <strong>{norm_summary['declining_norms']}</strong></p>
         <table><tr><th>Norm</th><th>Status</th><th>Events</th><th>Agents</th><th>Households</th><th>Breadth</th><th>Support</th><th>Opposition</th><th>Last Tick</th><th>Evidence Summary</th></tr>{norm_rows or '<tr><td colspan="10">No norm candidates recorded.</td></tr>'}</table>
+        <h2>Stability Diagnostics</h2>
+        <p>Warnings: <strong>{warning_count}</strong> | Critical: <strong>{critical_count}</strong></p>
+        <table><tr><th>Severity</th><th>Metric</th><th>Evidence</th><th>Recommendation</th></tr>{diagnostic_rows or '<tr><td colspan="4">No diagnostics generated.</td></tr>'}</table>
         <h2>Recent Events</h2><table><tr><th>Tick</th><th>Type</th><th>Summary</th></tr>{event_rows}</table>
         <h2>Recent Decisions</h2><table><tr><th>Tick</th><th>Agent</th><th>Selected</th><th>Confidence</th></tr>{decision_rows}</table>
         """,
@@ -274,3 +284,10 @@ def _metric_table_rows(run_id: str) -> str:
             cells.append(f"<td>{value} <small>({delta_text})</small></td>")
         html_rows.append("<tr>" + "".join(cells) + "</tr>")
     return "".join(html_rows)
+
+
+def _load_diagnostics(run_id: str) -> dict:
+    path = diagnostics_json_path(run_id)
+    if not path.exists():
+        return {"warnings": []}
+    return json.loads(path.read_text(encoding="utf-8"))

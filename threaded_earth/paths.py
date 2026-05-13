@@ -28,6 +28,14 @@ def metrics_path(run_id: str) -> Path:
     return run_dir(run_id) / "exports" / "metrics.json"
 
 
+def diagnostics_json_path(run_id: str) -> Path:
+    return run_dir(run_id) / "exports" / "diagnostics.json"
+
+
+def diagnostics_report_path(run_id: str) -> Path:
+    return run_dir(run_id) / "reports" / "diagnostics.md"
+
+
 def snapshots_dir(run_id: str) -> Path:
     return run_dir(run_id) / "snapshots"
 
@@ -46,6 +54,14 @@ def analysis_report_path(analysis_id: str) -> Path:
 
 def analysis_json_path(analysis_id: str) -> Path:
     return analysis_dir(analysis_id) / "analysis.json"
+
+
+def analysis_diagnostics_json_path(analysis_id: str) -> Path:
+    return analysis_dir(analysis_id) / "diagnostics.json"
+
+
+def analysis_diagnostics_report_path(analysis_id: str) -> Path:
+    return analysis_dir(analysis_id) / "diagnostics.md"
 
 
 def ensure_artifact_dirs(run_id: str) -> None:

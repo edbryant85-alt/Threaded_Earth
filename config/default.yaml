@@ -46,6 +46,17 @@ simulation:
     norm_repeated_household_diminishing_factor: 0.65
     norm_stability_support_threshold: 1.2
     norm_decline_threshold: 0.35
+  diagnostics:
+    diagnostics_enabled: true
+    runaway_growth_ratio_threshold: 2.5
+    collapse_ratio_threshold: 0.35
+    saturation_high_threshold: 0.92
+    saturation_low_threshold: 0.08
+    flatline_window_ticks: 8
+    min_activity_threshold: 1
+    conflict_rate_warning_threshold: 4.0
+    propagation_rate_warning_threshold: 85.0
+    shortage_rate_warning_threshold: 0.35
 
 archetypes:
   - cultivator

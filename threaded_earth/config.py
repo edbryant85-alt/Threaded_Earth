@@ -71,6 +71,19 @@ class NormConfig(BaseModel):
     norm_decline_threshold: float = 0.35
 
 
+class DiagnosticsConfig(BaseModel):
+    diagnostics_enabled: bool = True
+    runaway_growth_ratio_threshold: float = 2.5
+    collapse_ratio_threshold: float = 0.35
+    saturation_high_threshold: float = 0.92
+    saturation_low_threshold: float = 0.08
+    flatline_window_ticks: int = 8
+    min_activity_threshold: int = 1
+    conflict_rate_warning_threshold: float = 4.0
+    propagation_rate_warning_threshold: float = 85.0
+    shortage_rate_warning_threshold: float = 0.35
+
+
 class SimulationConfig(BaseModel):
     population_size: int = 50
     settlement: SettlementConfig
@@ -81,6 +94,7 @@ class SimulationConfig(BaseModel):
     propagation: PropagationConfig = Field(default_factory=PropagationConfig)
     roles: RoleConfig = Field(default_factory=RoleConfig)
     norms: NormConfig = Field(default_factory=NormConfig)
+    diagnostics: DiagnosticsConfig = Field(default_factory=DiagnosticsConfig)
 
 
 class ThreadedEarthConfig(BaseModel):
