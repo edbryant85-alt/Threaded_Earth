@@ -4,12 +4,11 @@ from typing import Any
 
 from sqlalchemy.orm import Session
 
+from threaded_earth.config import NormConfig
 from threaded_earth.models import Agent, Event, NormCandidate, Relationship
 
 
-STABLE_SUPPORT_THRESHOLD = 1.2
 STABLE_EVIDENCE_THRESHOLD = 4
-DECLINING_OPPOSITION_MARGIN = 0.35
 
 
 def update_norm_candidates_for_event(
@@ -20,9 +19,22 @@ def update_norm_candidates_for_event(
     target: Agent | None,
     relationship: Relationship | None,
     tick: int,
+    config: NormConfig | None = None,
 ) -> None:
     for norm_name, support, opposition, summary in _evidence_from_event(event, actor, target, relationship):
-        update_norm_candidate(session, run_id, norm_name, support, opposition, tick, summary)
+        update_norm_candidate(
+            session,
+            run_id,
+            norm_name,
+            support,
+            opposition,
+            tick,
+            summary,
+            actor_id=actor.neutral_id if actor else event.actor,
+            household_id=actor.household_id if actor else None,
+            event_id=event.event_id,
+            config=config,
+        )
 
 
 def update_norm_candidate(
@@ -33,7 +45,12 @@ def update_norm_candidate(
     opposition: float,
     tick: int,
     evidence_summary: str,
+    actor_id: str | None = None,
+    household_id: str | None = None,
+    event_id: str | None = None,
+    config: NormConfig | None = None,
 ) -> NormCandidate:
+    config = config or NormConfig()
     norm = (
         session.query(NormCandidate)
         .filter(NormCandidate.run_id == run_id, NormCandidate.norm_name == norm_name)
@@ -48,18 +65,46 @@ def update_norm_candidate(
             evidence_count=0,
             support_score=0.0,
             opposition_score=0.0,
+            contributing_agent_ids=[],
+            contributing_household_ids=[],
+            contributing_event_ids=[],
+            recent_tick_count=0,
+            evidence_density=0.0,
+            breadth_score=0.0,
             first_observed_tick=tick,
             last_observed_tick=tick,
             status="emerging",
             evidence_summary=evidence_summary,
         )
         session.add(norm)
+    agent_ids = list(norm.contributing_agent_ids or [])
+    household_ids = list(norm.contributing_household_ids or [])
+    event_ids = list(norm.contributing_event_ids or [])
+    actor_factor = 1.0 if actor_id is None or actor_id not in agent_ids else config.norm_repeated_actor_diminishing_factor
+    household_factor = (
+        1.0
+        if household_id is None or household_id not in household_ids
+        else config.norm_repeated_household_diminishing_factor
+    )
+    contribution_factor = actor_factor * household_factor
+    if actor_id and actor_id not in agent_ids:
+        agent_ids.append(actor_id)
+    if household_id and household_id not in household_ids:
+        household_ids.append(household_id)
+    if event_id and event_id not in event_ids:
+        event_ids.append(event_id)
     norm.evidence_count += 1
-    norm.support_score = round(max(0.0, norm.support_score + support), 3)
-    norm.opposition_score = round(max(0.0, norm.opposition_score + opposition), 3)
+    norm.support_score = round(max(0.0, norm.support_score + support * contribution_factor), 3)
+    norm.opposition_score = round(max(0.0, norm.opposition_score + opposition * contribution_factor), 3)
+    norm.contributing_agent_ids = agent_ids
+    norm.contributing_household_ids = household_ids
+    norm.contributing_event_ids = event_ids
     norm.last_observed_tick = tick
+    norm.recent_tick_count = max(1, norm.last_observed_tick - norm.first_observed_tick + 1)
+    norm.evidence_density = round(norm.evidence_count / norm.recent_tick_count, 3)
+    norm.breadth_score = _breadth_score(norm)
     norm.evidence_summary = evidence_summary
-    norm.status = _status(norm)
+    norm.status = _status(norm, config)
     session.flush()
     return norm
 
@@ -131,13 +176,25 @@ def _evidence_from_event(
     return evidence
 
 
-def _status(norm: NormCandidate) -> str:
+def _status(norm: NormCandidate, config: NormConfig) -> str:
     net_support = norm.support_score - norm.opposition_score
-    if norm.opposition_score > norm.support_score + DECLINING_OPPOSITION_MARGIN:
+    if norm.opposition_score > norm.support_score + config.norm_decline_threshold:
         return "declining"
-    if norm.evidence_count >= STABLE_EVIDENCE_THRESHOLD and net_support >= STABLE_SUPPORT_THRESHOLD:
+    if (
+        norm.evidence_count >= STABLE_EVIDENCE_THRESHOLD
+        and net_support >= config.norm_stability_support_threshold
+        and len(norm.contributing_agent_ids or []) >= config.norm_min_agents_for_stable
+        and len(norm.contributing_household_ids or []) >= config.norm_min_households_for_stable
+    ):
         return "stable"
     return "emerging"
+
+
+def _breadth_score(norm: NormCandidate) -> float:
+    agent_count = len(norm.contributing_agent_ids or [])
+    household_count = len(norm.contributing_household_ids or [])
+    event_count = max(1, len(norm.contributing_event_ids or []))
+    return round(((agent_count * 0.6) + (household_count * 0.9)) / event_count, 3)
 
 
 def _norm_payload(norm: NormCandidate) -> dict[str, Any]:
@@ -145,6 +202,12 @@ def _norm_payload(norm: NormCandidate) -> dict[str, Any]:
         "norm_candidate_id": norm.norm_candidate_id,
         "norm_name": norm.norm_name,
         "evidence_count": norm.evidence_count,
+        "contributing_agent_count": len(norm.contributing_agent_ids or []),
+        "contributing_household_count": len(norm.contributing_household_ids or []),
+        "contributing_event_count": len(norm.contributing_event_ids or []),
+        "recent_tick_count": norm.recent_tick_count,
+        "evidence_density": round(norm.evidence_density, 3),
+        "breadth_score": round(norm.breadth_score, 3),
         "support_score": round(norm.support_score, 3),
         "opposition_score": round(norm.opposition_score, 3),
         "status": norm.status,

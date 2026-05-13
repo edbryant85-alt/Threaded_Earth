@@ -36,6 +36,18 @@ def snapshot_path(run_id: str, tick: int) -> Path:
     return snapshots_dir(run_id) / f"tick_{tick}.json"
 
 
+def analysis_dir(analysis_id: str) -> Path:
+    return ARTIFACTS_DIR / "analysis" / analysis_id
+
+
+def analysis_report_path(analysis_id: str) -> Path:
+    return analysis_dir(analysis_id) / "analysis.md"
+
+
+def analysis_json_path(analysis_id: str) -> Path:
+    return analysis_dir(analysis_id) / "analysis.json"
+
+
 def ensure_artifact_dirs(run_id: str) -> None:
     root = run_dir(run_id)
     for child in ("logs", "reports", "exports", "snapshots"):

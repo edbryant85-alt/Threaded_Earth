@@ -40,6 +40,12 @@ simulation:
   norms:
     norm_influence_enabled: false
     norm_influence_strength: 0.02
+    norm_min_agents_for_stable: 3
+    norm_min_households_for_stable: 2
+    norm_repeated_actor_diminishing_factor: 0.35
+    norm_repeated_household_diminishing_factor: 0.65
+    norm_stability_support_threshold: 1.2
+    norm_decline_threshold: 0.35
 
 archetypes:
   - cultivator

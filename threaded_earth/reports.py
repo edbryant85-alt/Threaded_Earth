@@ -397,12 +397,15 @@ def _norm_candidate_lines(session: Session, run_id: str) -> list[str]:
     )
     examples = [
         f"- {norm.norm_name}: status={norm.status}; evidence={norm.evidence_count}; "
+        f"agents={len(norm.contributing_agent_ids or [])}; households={len(norm.contributing_household_ids or [])}; "
+        f"breadth={norm.breadth_score:.2f}; density={norm.evidence_density:.2f}; "
         f"support={norm.support_score:.2f}; opposition={norm.opposition_score:.2f}; "
         f"last_tick={norm.last_observed_tick}; example={norm.evidence_summary}"
         for norm in norms[:8]
     ]
     return [
         "- These are descriptive candidates inferred from repeated logged patterns, not laws, institutions, or enforced rules.",
+        "- Support is breadth-aware: repeated evidence from the same agent or household is discounted.",
         f"- total candidates: {stats['norm_candidates_total']}",
         f"- emerging/stable/declining: {stats['emerging_norms']}/{stats['stable_norms']}/{stats['declining_norms']}",
         *(examples or ["- detected norms: none yet."]),

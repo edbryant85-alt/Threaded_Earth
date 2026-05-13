@@ -184,7 +184,7 @@ def run_detail(run_id: str) -> str:
         for role in recent_roles
     )
     norm_rows = "".join(
-        f"<tr><td>{norm.norm_name}</td><td>{norm.status}</td><td>{norm.evidence_count}</td><td>{norm.support_score:.2f}</td><td>{norm.opposition_score:.2f}</td><td>{norm.last_observed_tick}</td><td>{norm.evidence_summary}</td></tr>"
+        f"<tr><td>{norm.norm_name}</td><td>{norm.status}</td><td>{norm.evidence_count}</td><td>{len(norm.contributing_agent_ids or [])}</td><td>{len(norm.contributing_household_ids or [])}</td><td>{norm.breadth_score:.2f}</td><td>{norm.support_score:.2f}</td><td>{norm.opposition_score:.2f}</td><td>{norm.last_observed_tick}</td><td>{norm.evidence_summary}</td></tr>"
         for norm in recent_norms
     )
     latest_tick = inventory.latest_tick if inventory.latest_tick is not None else "none"
@@ -232,7 +232,7 @@ def run_detail(run_id: str) -> str:
         <table><tr><th>Agent</th><th>Role</th><th>Score</th><th>Evidence</th><th>Updated Tick</th><th>Evidence Summary</th></tr>{role_rows or '<tr><td colspan="6">No role signals recorded.</td></tr>'}</table>
         <h2>Norm Candidates</h2>
         <p>Total: <strong>{norm_summary['norm_candidates_total']}</strong> | Emerging: <strong>{norm_summary['emerging_norms']}</strong> | Stable: <strong>{norm_summary['stable_norms']}</strong> | Declining: <strong>{norm_summary['declining_norms']}</strong></p>
-        <table><tr><th>Norm</th><th>Status</th><th>Evidence</th><th>Support</th><th>Opposition</th><th>Last Tick</th><th>Evidence Summary</th></tr>{norm_rows or '<tr><td colspan="7">No norm candidates recorded.</td></tr>'}</table>
+        <table><tr><th>Norm</th><th>Status</th><th>Events</th><th>Agents</th><th>Households</th><th>Breadth</th><th>Support</th><th>Opposition</th><th>Last Tick</th><th>Evidence Summary</th></tr>{norm_rows or '<tr><td colspan="10">No norm candidates recorded.</td></tr>'}</table>
         <h2>Recent Events</h2><table><tr><th>Tick</th><th>Type</th><th>Summary</th></tr>{event_rows}</table>
         <h2>Recent Decisions</h2><table><tr><th>Tick</th><th>Agent</th><th>Selected</th><th>Confidence</th></tr>{decision_rows}</table>
         """,

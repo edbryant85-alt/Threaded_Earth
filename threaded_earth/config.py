@@ -63,6 +63,12 @@ class RoleConfig(BaseModel):
 class NormConfig(BaseModel):
     norm_influence_enabled: bool = False
     norm_influence_strength: float = 0.02
+    norm_min_agents_for_stable: int = 3
+    norm_min_households_for_stable: int = 2
+    norm_repeated_actor_diminishing_factor: float = 0.35
+    norm_repeated_household_diminishing_factor: float = 0.65
+    norm_stability_support_threshold: float = 1.2
+    norm_decline_threshold: float = 0.35
 
 
 class SimulationConfig(BaseModel):

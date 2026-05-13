@@ -4,7 +4,7 @@ import json
 import random
 
 from threaded_earth.cognition import choose_action
-from threaded_earth.config import RoleConfig, load_config
+from threaded_earth.config import NormConfig, RoleConfig, load_config
 from threaded_earth.db import session_factory
 from threaded_earth.events import record_event
 from threaded_earth.models import Agent, Event, Household, NormCandidate, Relationship, RoleSignal, Run
@@ -59,15 +59,98 @@ def test_role_influence_is_deterministic():
 def test_repeated_sharing_with_kin_creates_stable_sharing_norm(tmp_path):
     SessionLocal = session_factory(tmp_path / "test.sqlite")
     with SessionLocal() as session:
-        actor, target, relationship = _seed_norm_fixture(session)
         for tick in range(1, 5):
-            event = _event(session, tick, "resource_exchange", actor.neutral_id, target.neutral_id, transferred=1.0)
-            update_norm_candidates_for_event(session, "run-test", event, actor, target, relationship, tick)
+            _seed_norm_fixture(session) if tick == 1 else None
+            update_norm_candidate(
+                session,
+                "run-test",
+                "sharing_food_with_kin",
+                0.35,
+                0.0,
+                tick,
+                f"shared with kin: event-{tick}",
+                actor_id=f"agent-{tick:03d}",
+                household_id=f"hh-{tick:03d}",
+                event_id=f"event-{tick}",
+            )
         norm = _norm(session, "sharing_food_with_kin")
 
     assert norm.evidence_count == 4
     assert norm.support_score >= 1.2
     assert norm.status == "stable"
+    assert len(norm.contributing_agent_ids) == 4
+    assert len(norm.contributing_household_ids) == 4
+
+
+def test_repeated_same_actor_counts_less_than_broad_contributors(tmp_path):
+    SessionLocal = session_factory(tmp_path / "test.sqlite")
+    with SessionLocal() as session:
+        _seed_norm_fixture(session)
+        for tick in range(1, 4):
+            update_norm_candidate(
+                session,
+                "run-test",
+                "sharing_food_with_kin",
+                0.35,
+                0.0,
+                tick,
+                f"shared with kin: event-{tick}",
+                actor_id="agent-001",
+                household_id="hh-001",
+                event_id=f"event-{tick}",
+            )
+        same_actor_support = _norm(session, "sharing_food_with_kin").support_score
+
+    BroadSessionLocal = session_factory(tmp_path / "broad.sqlite")
+    with BroadSessionLocal() as session:
+        _seed_norm_fixture(session, run_id="run-broad")
+        for tick in range(1, 4):
+            update_norm_candidate(
+                session,
+                "run-broad",
+                "sharing_food_with_kin",
+                0.35,
+                0.0,
+                tick,
+                f"shared with kin: event-{tick}",
+                actor_id=f"agent-{tick:03d}",
+                household_id=f"hh-{tick:03d}",
+                event_id=f"event-{tick}",
+            )
+        broad_support = (
+            session.query(NormCandidate)
+            .filter(NormCandidate.run_id == "run-broad", NormCandidate.norm_name == "sharing_food_with_kin")
+            .one()
+            .support_score
+        )
+
+    assert broad_support > same_actor_support
+
+
+def test_stable_status_requires_breadth_threshold(tmp_path):
+    SessionLocal = session_factory(tmp_path / "test.sqlite")
+    with SessionLocal() as session:
+        _seed_norm_fixture(session)
+        strict = NormConfig(norm_min_agents_for_stable=3, norm_min_households_for_stable=2)
+        for tick in range(1, 13):
+            update_norm_candidate(
+                session,
+                "run-test",
+                "sharing_food_with_kin",
+                0.35,
+                0.0,
+                tick,
+                f"shared with kin: event-{tick}",
+                actor_id="agent-001",
+                household_id="hh-001",
+                event_id=f"event-{tick}",
+                config=strict,
+            )
+        norm = _norm(session, "sharing_food_with_kin")
+
+    assert norm.support_score >= strict.norm_stability_support_threshold
+    assert norm.status == "emerging"
+    assert len(norm.contributing_agent_ids) == 1
 
 
 def test_repeated_repairs_and_conflicts_update_norm_candidates(tmp_path):
@@ -138,9 +221,12 @@ def test_snapshots_reports_and_dashboard_include_norm_candidates(tmp_path, monke
     report = report_path.read_text(encoding="utf-8")
     html = run_detail("run-test")
     assert "norm_candidates_total" in snapshot["norm_summary"]
+    assert "breadth_score" in snapshot["norm_summary"]["top_norm_candidates"][0]
     assert "## Norm Candidates" in report
+    assert "breadth" in report
     assert "descriptive candidates" in report
     assert "Norm Candidates" in html
+    assert "Households" in html
 
 
 def test_default_norm_influence_is_diagnostic_only():
@@ -148,13 +234,16 @@ def test_default_norm_influence_is_diagnostic_only():
     assert config.simulation.norms.norm_influence_enabled is False
 
 
-def _seed_norm_fixture(session):
-    session.add(Run(run_id="run-test", seed=1, config={}, status="running"))
+def _seed_norm_fixture(session, run_id: str = "run-test"):
+    session.add(Run(run_id=run_id, seed=1, config={}, status="running"))
     actor = _agent("agent-001")
     target = _agent("agent-002")
+    actor.run_id = run_id
+    target.run_id = run_id
     session.add_all([actor, target, _household()])
+    session.query(Household).filter(Household.household_id == "hh-001").update({"run_id": run_id})
     relationship = Relationship(
-        run_id="run-test",
+        run_id=run_id,
         source_agent=actor.neutral_id,
         target_agent=target.neutral_id,
         affinity=0.65,

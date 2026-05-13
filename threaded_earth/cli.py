@@ -6,6 +6,7 @@ from pathlib import Path
 import typer
 import uvicorn
 
+from threaded_earth.analysis import run_multi_seed_analysis
 from threaded_earth.config import load_config
 from threaded_earth.db import init_db, session_factory
 from threaded_earth.events import append_jsonl
@@ -78,6 +79,22 @@ def report(run_id: str = typer.Option(..., help="Run id to report on.")) -> None
 
 
 @app.command()
+def analyze(
+    seeds: str = typer.Option(..., help="Comma-separated integer seeds, e.g. 1,2,3."),
+    days: int = typer.Option(15, min=1),
+    config: Path = typer.Option(DEFAULT_CONFIG_PATH),
+) -> None:
+    seed_values = _parse_seeds(seeds)
+    loaded = load_config(config)
+    aggregate = run_multi_seed_analysis(seed_values, days, loaded)
+    typer.echo(f"analysis_id={aggregate['analysis_id']}")
+    typer.echo(f"analysis_json={ARTIFACTS_DIR / 'analysis' / aggregate['analysis_id'] / 'analysis.json'}")
+    typer.echo(f"analysis_report={ARTIFACTS_DIR / 'analysis' / aggregate['analysis_id'] / 'analysis.md'}")
+    for run_id in aggregate["run_ids"]:
+        typer.echo(f"run_id={run_id}")
+
+
+@app.command()
 def serve(host: str = "127.0.0.1", port: int = 8000) -> None:
     uvicorn.run("threaded_earth.web:app", host=host, port=port, reload=False)
 
@@ -85,3 +102,10 @@ def serve(host: str = "127.0.0.1", port: int = 8000) -> None:
 def record_manual_event(run_id: str, summary: str) -> None:
     """Tiny helper kept for future sandbox controls; not exposed in stage 1 CLI."""
     append_jsonl(event_log_path(run_id), {"run_id": run_id, "event_type": "manual_note", "summary": summary})
+
+
+def _parse_seeds(raw: str) -> list[int]:
+    seeds = [int(piece.strip()) for piece in raw.split(",") if piece.strip()]
+    if not seeds:
+        raise typer.BadParameter("At least one seed is required.")
+    return seeds

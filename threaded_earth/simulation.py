@@ -262,7 +262,7 @@ def _apply_action(
         )
         _remember(session, run_id, tick, agent.neutral_id, event.event_id, 0.45, event.summary)
         record_action_role_evidence(session, run_id, agent, tick, action, event)
-        update_norm_candidates_for_event(session, run_id, event, agent, None, target_rel, tick)
+        update_norm_candidates_for_event(session, run_id, event, agent, None, target_rel, tick, config.simulation.norms)
     elif action == "cooperate":
         target_household = _target_household(households_by_agent, trace.selected_target_agent_id)
         transfer = None
@@ -296,7 +296,9 @@ def _apply_action(
         _remember(session, run_id, tick, agent.neutral_id, event.event_id, 0.58, event.summary)
         _remember_target(session, run_id, tick, trace.selected_target_agent_id, event.event_id, 0.56, event.summary)
         record_action_role_evidence(session, run_id, agent, tick, action, event)
-        update_norm_candidates_for_event(session, run_id, event, agent, agents_by_id.get(trace.selected_target_agent_id), target_rel, tick)
+        update_norm_candidates_for_event(
+            session, run_id, event, agent, agents_by_id.get(trace.selected_target_agent_id), target_rel, tick, config.simulation.norms
+        )
         propagate_social_event(session, run_id, tick, event, agents_by_id, households_by_agent, config.simulation.propagation)
     elif action == "share_food":
         target_household = _target_household(households_by_agent, trace.selected_target_agent_id)
@@ -332,7 +334,9 @@ def _apply_action(
         _remember(session, run_id, tick, agent.neutral_id, event.event_id, 0.64, event.summary)
         _remember_target(session, run_id, tick, trace.selected_target_agent_id, event.event_id, 0.62, event.summary)
         record_action_role_evidence(session, run_id, agent, tick, action, event)
-        update_norm_candidates_for_event(session, run_id, event, agent, agents_by_id.get(trace.selected_target_agent_id), target_rel, tick)
+        update_norm_candidates_for_event(
+            session, run_id, event, agent, agents_by_id.get(trace.selected_target_agent_id), target_rel, tick, config.simulation.norms
+        )
         propagate_social_event(session, run_id, tick, event, agents_by_id, households_by_agent, config.simulation.propagation)
     elif action == "repair_relationship":
         if target_rel is not None:
@@ -353,7 +357,9 @@ def _apply_action(
         _remember(session, run_id, tick, agent.neutral_id, event.event_id, 0.66, event.summary)
         _remember_target(session, run_id, tick, trace.selected_target_agent_id, event.event_id, 0.62, event.summary)
         record_action_role_evidence(session, run_id, agent, tick, action, event)
-        update_norm_candidates_for_event(session, run_id, event, agent, agents_by_id.get(trace.selected_target_agent_id), target_rel, tick)
+        update_norm_candidates_for_event(
+            session, run_id, event, agent, agents_by_id.get(trace.selected_target_agent_id), target_rel, tick, config.simulation.norms
+        )
         propagate_social_event(session, run_id, tick, event, agents_by_id, households_by_agent, config.simulation.propagation)
     elif action == "avoid_conflict":
         agent.needs["belonging"] = max(0, agent.needs["belonging"] - 2)
@@ -370,7 +376,9 @@ def _apply_action(
         _remember(session, run_id, tick, agent.neutral_id, event.event_id, 0.57, event.summary)
         _remember_target(session, run_id, tick, trace.selected_target_agent_id, event.event_id, 0.55, event.summary)
         record_action_role_evidence(session, run_id, agent, tick, action, event)
-        update_norm_candidates_for_event(session, run_id, event, agent, agents_by_id.get(trace.selected_target_agent_id), target_rel, tick)
+        update_norm_candidates_for_event(
+            session, run_id, event, agent, agents_by_id.get(trace.selected_target_agent_id), target_rel, tick, config.simulation.norms
+        )
     elif action == "conflict_over_food":
         target_household = _target_household(households_by_agent, trace.selected_target_agent_id)
         transfer = None
@@ -406,7 +414,9 @@ def _apply_action(
         _remember(session, run_id, tick, agent.neutral_id, event.event_id, 0.78, event.summary)
         _remember_target(session, run_id, tick, trace.selected_target_agent_id, event.event_id, 0.74, event.summary)
         record_action_role_evidence(session, run_id, agent, tick, action, event)
-        update_norm_candidates_for_event(session, run_id, event, agent, agents_by_id.get(trace.selected_target_agent_id), target_rel, tick)
+        update_norm_candidates_for_event(
+            session, run_id, event, agent, agents_by_id.get(trace.selected_target_agent_id), target_rel, tick, config.simulation.norms
+        )
         propagate_social_event(session, run_id, tick, event, agents_by_id, households_by_agent, config.simulation.propagation)
     else:
         agent.needs["rest"] = min(100, agent.needs["rest"] + 14)
