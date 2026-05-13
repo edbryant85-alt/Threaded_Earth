@@ -64,6 +64,18 @@ def analysis_diagnostics_report_path(analysis_id: str) -> Path:
     return analysis_dir(analysis_id) / "diagnostics.md"
 
 
+def calibration_dir(calibration_id: str) -> Path:
+    return ARTIFACTS_DIR / "calibration" / calibration_id
+
+
+def calibration_json_path(calibration_id: str) -> Path:
+    return calibration_dir(calibration_id) / "calibration.json"
+
+
+def calibration_report_path(calibration_id: str) -> Path:
+    return calibration_dir(calibration_id) / "calibration.md"
+
+
 def ensure_artifact_dirs(run_id: str) -> None:
     root = run_dir(run_id)
     for child in ("logs", "reports", "exports", "snapshots"):

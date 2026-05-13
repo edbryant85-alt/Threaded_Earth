@@ -7,6 +7,7 @@ import typer
 import uvicorn
 
 from threaded_earth.analysis import run_multi_seed_analysis
+from threaded_earth.calibration import run_calibration
 from threaded_earth.config import load_config
 from threaded_earth.db import init_db, session_factory
 from threaded_earth.diagnostics import diagnose_analysis, diagnose_run
@@ -17,6 +18,8 @@ from threaded_earth.paths import (
     DEFAULT_CONFIG_PATH,
     analysis_diagnostics_json_path,
     analysis_diagnostics_report_path,
+    calibration_json_path,
+    calibration_report_path,
     db_path,
     diagnostics_json_path,
     diagnostics_report_path,
@@ -136,6 +139,26 @@ def diagnose_analysis_command(
 
 
 @app.command()
+def calibrate(
+    seeds: str = typer.Option(..., help="Comma-separated integer seeds, e.g. 1,2,3."),
+    days: str = typer.Option("15,50,100", help="Comma-separated durations, e.g. 15,50,100."),
+    profile: str = typer.Option("default", help="Calibration profile label."),
+    output_id: str | None = typer.Option(None, help="Optional deterministic calibration id."),
+    config: Path = typer.Option(DEFAULT_CONFIG_PATH),
+) -> None:
+    seed_values = _parse_seeds(seeds)
+    durations = _parse_days(days)
+    loaded = load_config(config)
+    result = run_calibration(seed_values, durations, loaded, profile=profile, calibration_id=output_id)
+    typer.echo(f"calibration_id={result['calibration_id']}")
+    typer.echo(f"calibration_status={result['status']}")
+    typer.echo(f"calibration_json={calibration_json_path(result['calibration_id'])}")
+    typer.echo(f"calibration_report={calibration_report_path(result['calibration_id'])}")
+    for run_id in result["run_ids"]:
+        typer.echo(f"run_id={run_id}")
+
+
+@app.command()
 def serve(host: str = "127.0.0.1", port: int = 8000) -> None:
     uvicorn.run("threaded_earth.web:app", host=host, port=port, reload=False)
 
@@ -150,3 +173,12 @@ def _parse_seeds(raw: str) -> list[int]:
     if not seeds:
         raise typer.BadParameter("At least one seed is required.")
     return seeds
+
+
+def _parse_days(raw: str) -> list[int]:
+    days = [int(piece.strip()) for piece in raw.split(",") if piece.strip()]
+    if not days:
+        raise typer.BadParameter("At least one duration is required.")
+    if any(day < 1 for day in days):
+        raise typer.BadParameter("Durations must be positive integers.")
+    return days
