@@ -9,6 +9,7 @@ from typing import Any
 
 from sqlalchemy.orm import Session
 
+from threaded_earth.memory import memory_stats
 from threaded_earth.metrics import compute_metrics
 from threaded_earth.models import Agent, Event, Household, Relationship, Resource
 from threaded_earth.paths import snapshot_path, snapshots_dir
@@ -55,6 +56,7 @@ def build_snapshot(session: Session, run_id: str, tick: int) -> dict[str, Any]:
         "households_summary": _households_summary(households),
         "relationships_summary": _relationships_summary(relationships),
         "resources_summary": _resources_summary(resources),
+        "memory_summary": memory_stats(session, run_id),
         "metrics": compute_metrics(session, run_id),
         "event_ids": [event.event_id for event in events],
     }

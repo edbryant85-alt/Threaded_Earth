@@ -119,5 +119,8 @@ class Decision(Base):
     candidate_actions: Mapped[list[dict[str, Any]]] = mapped_column(JSON, nullable=False)
     selected_action: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
     reasons: Mapped[list[str]] = mapped_column(JSON, nullable=False)
+    retrieved_memory_ids: Mapped[list[str]] = mapped_column(JSON, default=list)
+    memory_influence_summary: Mapped[str] = mapped_column(Text, default="No memories retrieved.")
+    memory_score_adjustments: Mapped[dict[str, float]] = mapped_column(JSON, default=dict)
     confidence: Mapped[float] = mapped_column(Float, nullable=False)
     uncertainty_notes: Mapped[str] = mapped_column(Text, nullable=False)

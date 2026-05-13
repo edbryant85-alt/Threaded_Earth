@@ -4,6 +4,7 @@ import random
 from dataclasses import dataclass
 from typing import Any
 
+from threaded_earth.memory import RetrievedMemory, memory_adjustments, summarize_memory_influence
 from threaded_earth.models import Agent, Household, Relationship
 
 
@@ -17,6 +18,9 @@ class DecisionTrace:
     relationship_modifiers: dict[str, Any]
     active_needs: dict[str, Any]
     memories_consulted: list[str]
+    retrieved_memory_ids: list[str]
+    memory_influence_summary: str
+    memory_score_adjustments: dict[str, float]
 
 
 def choose_action(
@@ -25,7 +29,9 @@ def choose_action(
     relationships: list[Relationship],
     rng: random.Random,
     tick: int,
+    retrieved_memories: list[RetrievedMemory] | None = None,
 ) -> DecisionTrace:
+    retrieved_memories = retrieved_memories or []
     needs = dict(agent.needs)
     food_stores = float(household.stored_resources.get("grain", 0)) + float(household.stored_resources.get("fish", 0))
     avg_trust = sum(rel.trust for rel in relationships) / len(relationships) if relationships else 0.35
@@ -45,6 +51,12 @@ def choose_action(
         candidates[1]["score"] += 0.15
     if agent.archetype in {"trader", "craft worker", "builder"}:
         candidates[3]["score"] += 0.08
+
+    adjustments = memory_adjustments(retrieved_memories, avg_trust)
+    for candidate in candidates:
+        candidate["base_score"] = round(candidate["score"], 3)
+        candidate["memory_adjustment"] = adjustments.get(candidate["action"], 0.0)
+        candidate["score"] = round(max(0.01, candidate["score"] + candidate["memory_adjustment"]), 3)
 
     total = sum(max(0.01, candidate["score"]) for candidate in candidates)
     pick = rng.uniform(0, total)
@@ -66,6 +78,9 @@ def choose_action(
         f"avg_trust={avg_trust:.2f}",
         f"tick={tick}",
     ]
+    if retrieved_memories:
+        reasons.append(f"retrieved_memory_ids={[memory.memory_id for memory in retrieved_memories]}")
+        reasons.append(f"memory_score_adjustments={adjustments}")
     return DecisionTrace(
         candidate_actions=candidates,
         selected_action={"action": selected["action"], "score": round(selected["score"], 3)},
@@ -74,7 +89,10 @@ def choose_action(
         uncertainty_notes="Local symbolic rule choice; no hidden model or LLM inference used.",
         relationship_modifiers={"avg_trust": round(avg_trust, 3), "avg_affinity": round(avg_affinity, 3)},
         active_needs=needs,
-        memories_consulted=[],
+        memories_consulted=[memory.memory_id for memory in retrieved_memories],
+        retrieved_memory_ids=[memory.memory_id for memory in retrieved_memories],
+        memory_influence_summary=summarize_memory_influence(retrieved_memories, adjustments),
+        memory_score_adjustments=adjustments,
     )
 
 

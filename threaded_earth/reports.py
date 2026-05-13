@@ -5,7 +5,7 @@ from pathlib import Path
 from sqlalchemy.orm import Session
 
 from threaded_earth.metrics import compute_metrics, write_metrics
-from threaded_earth.models import Decision, Event, Resource, Run
+from threaded_earth.models import Decision, Event, Memory, Resource, Run
 from threaded_earth.paths import report_path
 from threaded_earth.snapshots import DELTA_METRICS, metric_delta_rows
 
@@ -32,6 +32,7 @@ def generate_report(session: Session, run_id: str) -> Path:
     event_lines = [f"- tick {event.tick} {event.event_type}: {event.summary}" for event in major_events]
     metric_lines = [f"- {key}: {value}" for key, value in metrics.items()]
     delta_lines = _metric_delta_lines(run_id)
+    memory_lines = _memory_influence_lines(session, run_id)
 
     path = report_path(run_id)
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -51,6 +52,9 @@ def generate_report(session: Session, run_id: str) -> Path:
                 "",
                 "## Tick Metric Deltas",
                 *delta_lines,
+                "",
+                "## Memory Influence",
+                *memory_lines,
                 "",
                 "## Major Events",
                 *(event_lines or ["- No major events recorded."]),
@@ -90,3 +94,31 @@ def _metric_delta_lines(run_id: str) -> list[str]:
             pieces.append(f"{key}={value} ({delta_text})")
         lines.append(f"- tick {row['tick']}: " + "; ".join(pieces))
     return lines
+
+
+def _memory_influence_lines(session: Session, run_id: str) -> list[str]:
+    decisions = session.query(Decision).filter(Decision.run_id == run_id).order_by(Decision.tick, Decision.agent_id).all()
+    influenced = [decision for decision in decisions if decision.retrieved_memory_ids]
+    retrieved_ids = sorted({memory_id for decision in influenced for memory_id in decision.retrieved_memory_ids})
+    event_types: dict[str, int] = {}
+    if retrieved_ids:
+        rows = (
+            session.query(Memory, Event)
+            .join(Event, Memory.event_id == Event.event_id)
+            .filter(Memory.run_id == run_id, Memory.memory_id.in_(retrieved_ids))
+            .all()
+        )
+        for _, event in rows:
+            event_types[event.event_type] = event_types.get(event.event_type, 0) + 1
+    common_types = ", ".join(f"{event_type}={count}" for event_type, count in sorted(event_types.items())) or "none"
+    examples = [
+        f"- example tick {decision.tick} {decision.agent_id}: selected {decision.selected_action['action']}; "
+        f"{decision.memory_influence_summary}"
+        for decision in influenced
+        if decision.memory_score_adjustments
+    ][:3]
+    return [
+        f"- decisions influenced by memory: {len(influenced)} of {len(decisions)}",
+        f"- most commonly retrieved memory types: {common_types}",
+        *(examples or ["- examples: no decisions had non-zero memory score adjustments."]),
+    ]
